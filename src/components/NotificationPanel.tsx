@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, X, ExternalLink, CheckCircle } from 'lucide-react';
+import { AlertTriangle, X, ExternalLink, CheckCircle, Lock } from 'lucide-react';
 import { InventoryItem } from '../types/inventory';
 
 interface NotificationPanelProps {
@@ -9,6 +9,7 @@ interface NotificationPanelProps {
   globalThreshold: number;
   onOpenAllAlerts: () => void;
   onQuickAdjust: (item: InventoryItem) => void;
+  isAdmin: boolean;
 }
 
 export const NotificationPanel: React.FC<NotificationPanelProps> = ({
@@ -17,7 +18,8 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   lowStockItems,
   globalThreshold,
   onOpenAllAlerts,
-  onQuickAdjust
+  onQuickAdjust,
+  isAdmin
 }) => {
   if (!isOpen) return null;
 
@@ -77,9 +79,11 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
                   </span>
                   <button
                     onClick={() => onQuickAdjust(item)}
-                    className="px-2 py-0.5 bg-[#0066a1] hover:bg-[#004e7c] text-white rounded text-xs font-medium border border-black cursor-pointer"
+                    title={isAdmin ? "Adjust Stock Quantity" : "Adjust Stock (Requires Admin Password)"}
+                    className="px-2.5 py-0.5 bg-[#0066a1] hover:bg-[#004e7c] text-white rounded text-xs font-medium border border-black cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
                   >
-                    Adjust
+                    {!isAdmin && <Lock className="w-2.5 h-2.5 text-amber-200" />}
+                    <span>Adjust</span>
                   </button>
                 </div>
               </div>

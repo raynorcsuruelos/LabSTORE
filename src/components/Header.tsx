@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Lock, HelpCircle, Cloud, RefreshCw, AlertTriangle, WifiOff, CheckCircle2 } from 'lucide-react';
+import { Bell, Lock, HelpCircle, Cloud, RefreshCw, AlertTriangle, WifiOff, CheckCircle2, ShieldCheck, LogOut } from 'lucide-react';
 import { SyncServiceState } from '../services/oneDriveSync';
 
 interface HeaderProps {
@@ -10,6 +10,8 @@ interface HeaderProps {
   onOpenSync: () => void;
   syncState: SyncServiceState;
   onQuickSync: () => void;
+  isAdmin: boolean;
+  onLockAdmin: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +21,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHelp,
   onOpenSync,
   syncState,
-  onQuickSync
+  onQuickSync,
+  isAdmin,
+  onLockAdmin
 }) => {
   const getSyncBadge = () => {
     if (!syncState.isOnline) {
@@ -129,14 +133,34 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* Admin Login */}
-        <button
-          onClick={onOpenAdmin}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2c3e50] hover:bg-[#34495e] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
-        >
-          <Lock className="w-3.5 h-3.5" />
-          <span>Admin</span>
-        </button>
+        {/* Admin Authentication & Session Controls */}
+        {isAdmin ? (
+          <div className="flex items-center gap-1 bg-[#1a7a3c]/30 p-0.5 rounded-lg border border-emerald-400/50">
+            <button
+              onClick={onOpenAdmin}
+              title="Open Admin Panel"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1a7a3c] hover:bg-[#145a2c] text-white text-xs sm:text-sm font-semibold rounded-md border border-black cursor-pointer shadow-sm active:scale-95 transition"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Admin Panel</span>
+            </button>
+            <button
+              onClick={onLockAdmin}
+              title="Lock / Sign Out of Admin Mode"
+              className="p-1.5 hover:bg-black/30 rounded-md text-red-200 hover:text-white transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onOpenAdmin}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2c3e50] hover:bg-[#34495e] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
+          >
+            <Lock className="w-3.5 h-3.5 text-amber-300" />
+            <span>Admin</span>
+          </button>
+        )}
 
         {/* Help */}
         <button

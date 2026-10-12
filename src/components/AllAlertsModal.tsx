@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, AlertTriangle, MapPin, CheckCircle } from 'lucide-react';
+import { X, AlertTriangle, MapPin, CheckCircle, Lock } from 'lucide-react';
 import { InventoryItem } from '../types/inventory';
 
 interface AllAlertsModalProps {
@@ -8,6 +8,7 @@ interface AllAlertsModalProps {
   lowStockItems: InventoryItem[];
   globalThreshold: number;
   onAdjust: (item: InventoryItem) => void;
+  isAdmin: boolean;
 }
 
 export const AllAlertsModal: React.FC<AllAlertsModalProps> = ({
@@ -15,7 +16,8 @@ export const AllAlertsModal: React.FC<AllAlertsModalProps> = ({
   onClose,
   lowStockItems,
   globalThreshold,
-  onAdjust
+  onAdjust,
+  isAdmin
 }) => {
   if (!isOpen) return null;
 
@@ -90,9 +92,11 @@ export const AllAlertsModal: React.FC<AllAlertsModalProps> = ({
                         onClose();
                         onAdjust(item);
                       }}
-                      className="px-3 py-1.5 bg-[#0066a1] hover:bg-[#004e7c] text-white text-xs font-bold rounded border border-black cursor-pointer shadow-xs active:scale-95"
+                      title={isAdmin ? "Adjust Stock Quantity" : "Adjust Stock (Requires Admin Password)"}
+                      className="px-3 py-1.5 bg-[#0066a1] hover:bg-[#004e7c] text-white text-xs font-bold rounded border border-black cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
                     >
-                      Adjust
+                      {!isAdmin && <Lock className="w-3 h-3 text-amber-200" />}
+                      <span>Adjust</span>
                     </button>
                   </div>
                 </div>

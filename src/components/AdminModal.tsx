@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { InventoryItem } from '../types/inventory';
 import { getSetting, setSetting } from '../db/dexieDb';
+import { verifyAdminPassword, setAdminPasswordSecure } from '../services/security';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -154,9 +155,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassError('');
-    const stored = await getSetting<string>('adminPass', 'WLAdmin2025');
-    if (curPass !== stored) {
-      setPassError('Current password is incorrect.');
+
+    const verifyRes = await verifyAdminPassword(curPass);
+    if (!verifyRes.success) {
+      setPassError(verifyRes.message || 'Current password is incorrect.');
       return;
     }
     if (!newPass.trim()) {
@@ -172,11 +174,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       return;
     }
 
-    await setSetting('adminPass', newPass);
+    await setAdminPasswordSecure(newPass);
     setCurPass('');
     setNewPass('');
     setConfirmPass('');
-    showToast('Admin password updated successfully!', 'success');
+    showToast('Admin password securely updated with cryptographic hashing!', 'success');
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

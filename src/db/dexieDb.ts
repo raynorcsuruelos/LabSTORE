@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import { InventoryItem, HistoryEntry, SyncQueueItem, OneDriveConfig } from '../types/inventory';
+import { initializeSecurity } from '../services/security';
 
 export class WLLabDatabase extends Dexie {
   inventory!: Table<InventoryItem, string>;
@@ -69,12 +70,8 @@ export async function initDatabase() {
     await logHistory('Database Initialized', 'SYSTEM', 'Seeded initial inventory in IndexedDB', itemsToInsert.length, 'Offline IndexedDB storage active');
   }
 
-  // Ensure default settings exist
-  const pass = await getSetting('adminPass', null);
-  if (!pass) {
-    const legacyPass = localStorage.getItem('wllab_adminpass') || 'WLAdmin2025';
-    await setSetting('adminPass', legacyPass);
-  }
+  // Ensure secure hashed admin credentials exist
+  await initializeSecurity();
 
   const gthresh = await getSetting('globalThreshold', null);
   if (gthresh === null) {

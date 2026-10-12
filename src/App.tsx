@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -26,6 +26,11 @@ import { EditPartModal } from './components/EditPartModal';
 import { SyncStatusModal } from './components/SyncStatusModal';
 import { HelpModal } from './components/HelpModal';
 import { BarChart3, ExternalLink } from 'lucide-react';
+
+interface PendingAdminAction {
+  type: 'adjust' | 'withdraw' | 'admin_panel';
+  item?: InventoryItem;
+}
 
 function InventoryApp() {
   const { showToast } = useToast();
@@ -70,7 +75,45 @@ function InventoryApp() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [adjustingItem, setAdjustingItem] = useState<InventoryItem | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+
+  // Security & Admin Session Management
   const [isAdmin, setIsAdmin] = useState(false);
+  const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+
+  // Inactivity auto-lock timer (15 minutes)
+  const handleLockAdmin = useCallback(() => {
+    if (isAdmin) {
+      setIsAdmin(false);
+      setPendingAdminAction(null);
+      setAdjustingItem(null);
+      setAdminModalOpen(false);
+      showToast('Admin session locked for security.', 'info');
+    }
+  }, [isAdmin, showToast]);
+
+  useEffect(() => {
+    const handleUserActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    window.addEventListener('pointerdown', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+    window.addEventListener('touchstart', handleUserActivity);
+
+    const interval = setInterval(() => {
+      if (isAdmin && Date.now() - lastActivityRef.current > 15 * 60 * 1000) {
+        handleLockAdmin();
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener('pointerdown', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+      window.removeEventListener('touchstart', handleUserActivity);
+      clearInterval(interval);
+    };
+  }, [isAdmin, handleLockAdmin]);
 
   // Initialize DB and background sync worker on mount
   useEffect(() => {
@@ -131,19 +174,69 @@ function InventoryApp() {
     return result;
   }, [items, searchQuery, activeFilter, globalThreshold]);
 
-  // Actions
-  const handleQuickStep = async (partNumber: string, delta: number) => {
-    const res = await adjustItemStock(partNumber, 'quick_step', delta);
-    if (res.success && res.newItem) {
-      showToast(
-        `${partNumber} stock: ${res.newItem.quantity} (${delta > 0 ? '+1' : '-1'})`,
-        res.newItem.quantity <= 0 ? 'warn' : 'info'
-      );
-    } else if (res.error) {
-      showToast(res.error, 'error');
+  // Admin Request Handlers
+  const handleRequestAdjust = (item: InventoryItem) => {
+    if (isAdmin) {
+      setAdjustingItem(item);
+    } else {
+      setPendingAdminAction({ type: 'adjust', item });
+      setAdminLoginOpen(true);
     }
   };
 
+  const handleRequestWithdraw = (item: InventoryItem) => {
+    if (isAdmin) {
+      if (item.quantity <= 0) {
+        showToast(`Stock for ${item.partNumber} is already zero.`, 'warn');
+        return;
+      }
+      if (window.confirm(`Withdraw all ${item.quantity} unit(s) of "${item.partNumber}"? Stock will be set to 0.`)) {
+        handleWithdraw(item.partNumber, 'Direct row withdraw by admin');
+      }
+    } else {
+      setPendingAdminAction({ type: 'withdraw', item });
+      setAdminLoginOpen(true);
+    }
+  };
+
+  const handleRequestAdminPanel = () => {
+    if (isAdmin) {
+      setAdminModalOpen(true);
+    } else {
+      setPendingAdminAction({ type: 'admin_panel' });
+      setAdminLoginOpen(true);
+    }
+  };
+
+  const handleAdminLoginSuccess = () => {
+    setIsAdmin(true);
+    setAdminLoginOpen(false);
+    lastActivityRef.current = Date.now();
+    showToast('Admin access granted!', 'success');
+
+    if (pendingAdminAction) {
+      const pending = pendingAdminAction;
+      setPendingAdminAction(null);
+
+      if (pending.type === 'adjust' && pending.item) {
+        setAdjustingItem(pending.item);
+      } else if (pending.type === 'withdraw' && pending.item) {
+        if (pending.item.quantity <= 0) {
+          showToast(`Stock for ${pending.item.partNumber} is already zero.`, 'warn');
+        } else if (
+          window.confirm(`Withdraw all ${pending.item.quantity} unit(s) of "${pending.item.partNumber}"? Stock will be set to 0.`)
+        ) {
+          handleWithdraw(pending.item.partNumber, 'Direct row withdraw by admin');
+        }
+      } else if (pending.type === 'admin_panel') {
+        setAdminModalOpen(true);
+      }
+    } else {
+      setAdminModalOpen(true);
+    }
+  };
+
+  // Stock Mutation Actions
   const handleApplyAdjust = async (
     partNumber: string,
     action: 'set' | 'add' | 'sub',
@@ -151,6 +244,10 @@ function InventoryApp() {
     threshold: number | undefined,
     reason: string
   ) => {
+    if (!isAdmin) {
+      showToast('Admin authorization required to adjust stock.', 'error');
+      return;
+    }
     const res = await adjustItemStock(partNumber, action, qty, reason, threshold);
     if (res.success && res.newItem) {
       showToast(`Stock updated for ${partNumber} (New Qty: ${res.newItem.quantity})`, 'success');
@@ -160,6 +257,10 @@ function InventoryApp() {
   };
 
   const handleWithdraw = async (partNumber: string, reason: string) => {
+    if (!isAdmin) {
+      showToast('Admin authorization required to withdraw stock.', 'error');
+      return;
+    }
     const res = await adjustItemStock(partNumber, 'withdraw', 0, reason);
     if (res.success) {
       showToast(`All units of ${partNumber} withdrawn to 0.`, 'warn');
@@ -301,6 +402,19 @@ function InventoryApp() {
     window.open('https://www.bluemm.slb.com', '_blank', 'noopener,noreferrer');
   };
 
+  // Determine modal copy based on pending action
+  const loginActionTitle = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
+    ? `Adjust Stock: ${pendingAdminAction.item.partNumber}`
+    : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
+    ? `Withdraw Stock: ${pendingAdminAction.item.partNumber}`
+    : 'Admin Authentication Required';
+
+  const loginActionDesc = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
+    ? `Administrator credentials required to modify stock count or safety threshold for part ${pendingAdminAction.item.partNumber}.`
+    : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
+    ? `Administrator credentials required to withdraw all inventory of part ${pendingAdminAction.item.partNumber}.`
+    : 'Stock modifications, withdrawals, part edits, and imports require verified administrator privileges.';
+
   return (
     <div className="min-h-screen bg-[#e9edf2] flex flex-col items-center py-0 sm:py-4">
       {/* Main Card Container */}
@@ -309,11 +423,13 @@ function InventoryApp() {
         <Header
           lowStockCount={lowStockItems.length}
           onToggleNotif={() => setNotifPanelOpen(!notifPanelOpen)}
-          onOpenAdmin={() => (isAdmin ? setAdminModalOpen(true) : setAdminLoginOpen(true))}
+          onOpenAdmin={handleRequestAdminPanel}
           onOpenHelp={() => setHelpModalOpen(true)}
           onOpenSync={() => setSyncModalOpen(true)}
           syncState={syncState}
           onQuickSync={handleTriggerSyncNow}
+          isAdmin={isAdmin}
+          onLockAdmin={handleLockAdmin}
         />
 
         {/* Low-Stock Notification Drawer */}
@@ -328,8 +444,9 @@ function InventoryApp() {
           }}
           onQuickAdjust={item => {
             setNotifPanelOpen(false);
-            setAdjustingItem(item);
+            handleRequestAdjust(item);
           }}
+          isAdmin={isAdmin}
         />
 
         {/* Instant Search & Filter Section */}
@@ -344,13 +461,12 @@ function InventoryApp() {
           outOfStockCount={outOfStockItems.length}
         />
 
-        {/* Live Inventory Results Table */}
+        {/* Live Inventory Results Table (Actual Stock Quantity Only) */}
         <InventoryTable
           items={filteredItems}
           globalThreshold={globalThreshold}
-          onQuickStep={handleQuickStep}
-          onOpenAdjust={item => setAdjustingItem(item)}
-          onQuickWithdraw={item => handleWithdraw(item.partNumber, 'Direct row withdraw')}
+          onOpenAdjust={handleRequestAdjust}
+          onQuickWithdraw={handleRequestWithdraw}
           onOpenEdit={item => setEditingItem(item)}
           isAdmin={isAdmin}
         />
@@ -378,6 +494,10 @@ function InventoryApp() {
           <div className="flex items-center gap-3 text-gray-500 font-mono text-[11px]">
             <span>Dexie DB: {items.length} items</span>
             <span>·</span>
+            <span>
+              Role: <strong className={isAdmin ? 'text-emerald-700' : 'text-gray-700'}>{isAdmin ? 'ADMIN' : 'VIEWER'}</strong>
+            </span>
+            <span>·</span>
             <span>Sync: {syncState.status.toUpperCase()}</span>
           </div>
         </footer>
@@ -397,7 +517,8 @@ function InventoryApp() {
         onClose={() => setAllAlertsOpen(false)}
         lowStockItems={lowStockItems}
         globalThreshold={globalThreshold}
-        onAdjust={item => setAdjustingItem(item)}
+        onAdjust={handleRequestAdjust}
+        isAdmin={isAdmin}
       />
 
       <HistoryModal
@@ -409,13 +530,13 @@ function InventoryApp() {
 
       <AdminLoginModal
         isOpen={adminLoginOpen}
-        onClose={() => setAdminLoginOpen(false)}
-        onLoginSuccess={() => {
-          setIsAdmin(true);
+        onClose={() => {
           setAdminLoginOpen(false);
-          setAdminModalOpen(true);
-          showToast('Admin mode unlocked!', 'success');
+          setPendingAdminAction(null);
         }}
+        onLoginSuccess={handleAdminLoginSuccess}
+        actionTitle={loginActionTitle}
+        actionDescription={loginActionDesc}
       />
 
       <AdminModal

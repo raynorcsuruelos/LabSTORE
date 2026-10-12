@@ -1,37 +1,62 @@
-import React, { useState } from 'react';
-import { X, Lock, AlertCircle } from 'lucide-react';
-import { getSetting } from '../db/dexieDb';
+import React, { useState, useEffect } from 'react';
+import { X, Lock, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { verifyAdminPassword } from '../services/security';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: () => void;
+  actionTitle?: string;
+  actionDescription?: string;
 }
 
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   isOpen,
   onClose,
-  onLoginSuccess
+  onLoginSuccess,
+  actionTitle = 'Admin Authentication Required',
+  actionDescription = 'Stock adjustments, withdrawals, and inventory configurations require verified administrator access.'
 }) => {
   if (!isOpen) return null;
 
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [lockoutTimer, setLockoutTimer] = useState<number | null>(null);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (lockoutTimer !== null && lockoutTimer > 0) {
+      interval = setInterval(() => {
+        setLockoutTimer(prev => (prev && prev > 1 ? prev - 1 : null));
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [lockoutTimer]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(false);
+    if (lockoutTimer && lockoutTimer > 0) return;
 
-    const storedPass = await getSetting<string>('adminPass', 'WLAdmin2025');
-    if (password === storedPass) {
+    setLoading(true);
+    setErrorMessage('');
+
+    const res = await verifyAdminPassword(password);
+    setLoading(false);
+
+    if (res.success) {
       setPassword('');
+      setErrorMessage('');
       onLoginSuccess();
     } else {
-      setError(true);
+      setErrorMessage(res.message || 'Incorrect password.');
+      if (res.lockoutSeconds) {
+        setLockoutTimer(res.lockoutSeconds);
+      }
     }
-    setLoading(false);
   };
 
   return (
@@ -40,7 +65,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         <div className="bg-[#003057] text-white px-5 py-3.5 flex items-center justify-between border-b-3 border-black">
           <div className="flex items-center gap-2">
             <Lock className="w-5 h-5 text-amber-300" />
-            <h3 className="font-bold text-base">Admin Authentication</h3>
+            <h3 className="font-bold text-base">{actionTitle}</h3>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-white/20 rounded cursor-pointer transition">
             <X className="w-5 h-5" />
@@ -48,24 +73,45 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900 leading-relaxed flex items-start gap-2">
+            <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <span>{actionDescription}</span>
+          </div>
+
           <div>
-            <label className="block text-xs font-bold text-gray-700 mb-1">Enter Administrator Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => {
-                setPassword(e.target.value);
-                setError(false);
-              }}
-              placeholder="Password (Default: WLAdmin2025)"
-              className="w-full p-2.5 border-2 border-black rounded-lg text-sm"
-              autoFocus
-              required
-            />
-            {error && (
-              <div className="mt-2 p-2 bg-red-50 border border-red-300 text-[#c0392b] text-xs font-semibold rounded flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>Incorrect password. Default is WLAdmin2025.</span>
+            <label className="block text-xs font-bold text-gray-700 mb-1">
+              Enter Administrator Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                disabled={Boolean(lockoutTimer && lockoutTimer > 0)}
+                onChange={e => {
+                  setPassword(e.target.value);
+                  setErrorMessage('');
+                }}
+                placeholder="Password (Default: WLAdmin2025)"
+                className="w-full pl-3 pr-10 py-2.5 border-2 border-black rounded-lg text-sm font-medium focus:outline-none focus:border-[#0066a1]"
+                autoFocus
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-black cursor-pointer"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {errorMessage && (
+              <div className="mt-2 p-2.5 bg-red-50 border border-red-300 text-[#c0392b] text-xs font-semibold rounded-lg flex items-start gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  {lockoutTimer ? `${errorMessage} (${lockoutTimer}s remaining)` : errorMessage}
+                </span>
               </div>
             )}
           </div>
@@ -80,10 +126,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={loading}
-              className="px-4 py-1.5 bg-[#2c3e50] hover:bg-[#1a252f] text-white rounded text-xs font-bold border-2 border-black cursor-pointer shadow-sm"
+              disabled={loading || Boolean(lockoutTimer && lockoutTimer > 0)}
+              className="px-4 py-1.5 bg-[#003057] hover:bg-[#002240] text-white rounded text-xs font-bold border-2 border-black cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
             >
-              Unlock Admin Panel
+              {loading ? 'Verifying...' : 'Authenticate'}
             </button>
           </div>
         </form>
