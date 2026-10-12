@@ -1,0 +1,732 @@
+import React, { useState } from 'react';
+import {
+  X,
+  Sliders,
+  Edit,
+  PlusCircle,
+  FileSpreadsheet,
+  Key,
+  Trash2,
+  Download,
+  Upload,
+  AlertCircle,
+  CheckCircle,
+  RotateCcw
+} from 'lucide-react';
+import { InventoryItem } from '../types/inventory';
+import { getSetting, setSetting } from '../db/dexieDb';
+
+interface AdminModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  items: InventoryItem[];
+  globalThreshold: number;
+  onApplyAdjust: (
+    partNumber: string,
+    action: 'set' | 'add' | 'sub',
+    qty: number,
+    threshold: number | undefined,
+    reason: string
+  ) => void;
+  onWithdraw: (partNumber: string, reason: string) => void;
+  onAddNewItem: (item: Omit<InventoryItem, 'updatedAt'>) => void;
+  onEditPart: (item: InventoryItem) => void;
+  onDeletePart: (partNumber: string) => void;
+  onImportItems: (items: InventoryItem[], filename: string) => void;
+  onExportCSV: () => void;
+  onClearAll: () => void;
+  onResetSampleData: () => void;
+  onSaveGlobalThreshold: (val: number) => void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info' | 'warn') => void;
+}
+
+export const AdminModal: React.FC<AdminModalProps> = ({
+  isOpen,
+  onClose,
+  items,
+  globalThreshold,
+  onApplyAdjust,
+  onWithdraw,
+  onAddNewItem,
+  onEditPart,
+  onDeletePart,
+  onImportItems,
+  onExportCSV,
+  onClearAll,
+  onResetSampleData,
+  onSaveGlobalThreshold,
+  showToast
+}) => {
+  if (!isOpen) return null;
+
+  const [activeTab, setActiveTab] = useState<'adjust' | 'edit' | 'add' | 'import' | 'settings'>('adjust');
+
+  // Adjust Tab State
+  const [selectedPartNumber, setSelectedPartNumber] = useState('');
+  const [adjAction, setAdjAction] = useState<'set' | 'add' | 'sub'>('set');
+  const [adjQty, setAdjQty] = useState('');
+  const [adjThreshold, setAdjThreshold] = useState('');
+  const [adjReason, setAdjReason] = useState('');
+
+  // Add Item Tab State
+  const [newPn, setNewPn] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newLoc, setNewLoc] = useState('');
+  const [newQty, setNewQty] = useState('');
+  const [newThreshold, setNewThreshold] = useState('');
+  const [newRemarks, setNewRemarks] = useState('');
+
+  // Edit list filter
+  const [editSearch, setEditSearch] = useState('');
+
+  // Password Settings
+  const [curPass, setCurPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [passError, setPassError] = useState('');
+
+  // Global threshold state
+  const [threshInput, setThreshInput] = useState(String(globalThreshold));
+
+  const selectedItem = items.find(i => i.partNumber === selectedPartNumber);
+
+  const handleAdjustSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPartNumber) {
+      showToast('Please select a part first.', 'error');
+      return;
+    }
+    const q = parseInt(adjQty, 10);
+    if (isNaN(q) || q < 0) {
+      showToast('Enter a valid non-negative quantity.', 'error');
+      return;
+    }
+    const t = adjThreshold.trim() === '' ? undefined : parseInt(adjThreshold, 10);
+    onApplyAdjust(selectedPartNumber, adjAction, q, t, adjReason);
+    setAdjQty('');
+    setAdjReason('');
+  };
+
+  const handleWithdrawClick = () => {
+    if (!selectedPartNumber) {
+      showToast('Select a part first.', 'error');
+      return;
+    }
+    onWithdraw(selectedPartNumber, adjReason || 'Full withdraw from admin panel');
+    setAdjReason('');
+  };
+
+  const handleAddNewSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPn.trim() || !newDesc.trim() || !newLoc.trim()) {
+      showToast('Part number, description, and location are required.', 'error');
+      return;
+    }
+    const q = parseInt(newQty, 10);
+    if (isNaN(q) || q < 0) {
+      showToast('Enter a valid stock quantity.', 'error');
+      return;
+    }
+
+    if (items.some(i => i.partNumber.toLowerCase() === newPn.trim().toLowerCase())) {
+      showToast('Part number already exists in inventory.', 'error');
+      return;
+    }
+
+    onAddNewItem({
+      partNumber: newPn.trim(),
+      description: newDesc.trim(),
+      location: newLoc.trim(),
+      quantity: q,
+      threshold: newThreshold.trim() === '' ? 0 : Math.max(0, parseInt(newThreshold, 10) || 0),
+      remarks: newRemarks.trim()
+    });
+
+    setNewPn('');
+    setNewDesc('');
+    setNewLoc('');
+    setNewQty('');
+    setNewThreshold('');
+    setNewRemarks('');
+    showToast(`Added part ${newPn}!`, 'success');
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassError('');
+    const stored = await getSetting<string>('adminPass', 'WLAdmin2025');
+    if (curPass !== stored) {
+      setPassError('Current password is incorrect.');
+      return;
+    }
+    if (!newPass.trim()) {
+      setPassError('New password cannot be empty.');
+      return;
+    }
+    if (newPass.length < 6) {
+      setPassError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPass !== confirmPass) {
+      setPassError('New passwords do not match.');
+      return;
+    }
+
+    await setSetting('adminPass', newPass);
+    setCurPass('');
+    setNewPass('');
+    setConfirmPass('');
+    showToast('Admin password updated successfully!', 'success');
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = event => {
+      const content = event.target?.result as string;
+      try {
+        let records: InventoryItem[] = [];
+        if (file.name.endsWith('.json')) {
+          const parsed = JSON.parse(content);
+          if (!Array.isArray(parsed)) throw new Error('JSON file must contain an array of parts.');
+          records = parsed;
+        } else {
+          // CSV Parser
+          const lines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
+          if (lines.length < 2) throw new Error('CSV is empty or missing data rows.');
+          const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+
+          for (let r = 1; r < lines.length; r++) {
+            const vals = lines[r].split(',').map(v => v.trim().replace(/^["']|["']$/g, ''));
+            const row: any = {};
+            headers.forEach((h, idx) => {
+              row[h] = vals[idx] || '';
+            });
+
+            if (row.partnumber || row['part number']) {
+              records.push({
+                partNumber: row.partnumber || row['part number'],
+                description: row.description || '',
+                location: row.location || 'Bin',
+                quantity: parseInt(row.quantity || row.qty || '0', 10) || 0,
+                threshold: parseInt(row.threshold || row['min threshold'] || '0', 10) || 0,
+                remarks: row.remarks || row.notes || '',
+                updatedAt: new Date().toISOString()
+              });
+            }
+          }
+        }
+
+        if (records.length === 0) throw new Error('No valid inventory records detected.');
+        onImportItems(records, file.name);
+      } catch (err: any) {
+        showToast(`Import failed: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const filteredEditList = items.filter(
+    i =>
+      i.partNumber.toLowerCase().includes(editSearch.toLowerCase()) ||
+      i.description.toLowerCase().includes(editSearch.toLowerCase()) ||
+      i.location.toLowerCase().includes(editSearch.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white border-4 border-black rounded-xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="bg-[#003057] text-white px-5 py-3.5 flex items-center justify-between border-b-3 border-black">
+          <div className="flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-amber-300" />
+            <h3 className="font-bold text-base sm:text-lg">Wireline Admin Panel</h3>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-white/20 rounded cursor-pointer transition">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="flex border-b-2 border-gray-300 bg-gray-100 px-4 pt-2 gap-1 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('adjust')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'adjust'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            📋 Adjust Stock
+          </button>
+          <button
+            onClick={() => setActiveTab('edit')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'edit'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            ✏️ Edit / Delete Parts
+          </button>
+          <button
+            onClick={() => setActiveTab('add')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'add'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            ➕ Add New Item
+          </button>
+          <button
+            onClick={() => setActiveTab('import')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'import'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            📥 Import / Export
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'settings'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            🔑 Admin Settings
+          </button>
+        </div>
+
+        {/* Tab Content */}
+        <div className="p-5 overflow-y-auto flex-1 text-xs sm:text-sm">
+          {/* TAB: ADJUST */}
+          {activeTab === 'adjust' && (
+            <form onSubmit={handleAdjustSubmit} className="space-y-4">
+              <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
+                Adjust Existing Stock Quantities
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Select Part</label>
+                  <select
+                    value={selectedPartNumber}
+                    onChange={e => {
+                      setSelectedPartNumber(e.target.value);
+                      const itm = items.find(i => i.partNumber === e.target.value);
+                      if (itm) {
+                        setAdjThreshold(itm.threshold !== undefined && itm.threshold !== null ? String(itm.threshold) : '');
+                      }
+                    }}
+                    className="w-full p-2.5 border-2 border-black rounded-lg text-xs bg-white font-medium"
+                  >
+                    <option value="">— Select Part —</option>
+                    {items.map(i => (
+                      <option key={i.partNumber} value={i.partNumber}>
+                        {i.partNumber} — {i.description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Current Stock Quantity</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={selectedItem ? selectedItem.quantity : 'Select a part above'}
+                    className="w-full p-2.5 border-2 border-gray-300 rounded-lg text-xs bg-gray-100 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Action</label>
+                  <select
+                    value={adjAction}
+                    onChange={e => setAdjAction(e.target.value as any)}
+                    className="w-full p-2.5 border-2 border-black rounded-lg text-xs bg-white font-medium"
+                  >
+                    <option value="set">Set Exact Quantity</option>
+                    <option value="add">Add (+)</option>
+                    <option value="sub">Subtract (-)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Adjustment Quantity *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={adjQty}
+                    onChange={e => setAdjQty(e.target.value)}
+                    placeholder="Enter quantity"
+                    className="w-full p-2.5 border-2 border-black rounded-lg text-xs font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Low-Stock Threshold <span className="font-normal text-gray-500">(0 = alert when empty)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={adjThreshold}
+                    onChange={e => setAdjThreshold(e.target.value)}
+                    placeholder="Leave blank to keep current"
+                    className="w-full p-2.5 border-2 border-black rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Reason / Notes</label>
+                  <input
+                    type="text"
+                    value={adjReason}
+                    onChange={e => setAdjReason(e.target.value)}
+                    placeholder="e.g. Audit reconciliation, rig dispatched..."
+                    className="w-full p-2.5 border-2 border-black rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-[#0066a1] hover:bg-[#004e7c] text-white rounded-lg font-bold border-2 border-black cursor-pointer shadow-sm active:scale-95"
+                >
+                  ✅ Apply Adjustment
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWithdrawClick}
+                  disabled={!selectedItem || selectedItem.quantity <= 0}
+                  className="px-4 py-2 bg-[#c0392b] hover:bg-[#962d22] text-white rounded-lg font-bold border-2 border-black cursor-pointer shadow-sm active:scale-95 disabled:opacity-40"
+                >
+                  📤 Withdraw (Max Stock)
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* TAB: EDIT / DELETE */}
+          {activeTab === 'edit' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-[#003057] uppercase tracking-wide">
+                  Edit or Delete Parts ({items.length})
+                </span>
+                <input
+                  type="text"
+                  placeholder="Filter parts..."
+                  value={editSearch}
+                  onChange={e => setEditSearch(e.target.value)}
+                  className="p-1.5 border-2 border-black rounded-md text-xs w-48"
+                />
+              </div>
+
+              <div className="border-2 border-gray-300 rounded-lg max-h-80 overflow-y-auto divide-y divide-gray-200 bg-white">
+                {filteredEditList.length === 0 ? (
+                  <div className="p-6 text-center text-gray-400">No parts found matching filter.</div>
+                ) : (
+                  filteredEditList.map(item => (
+                    <div key={item.partNumber} className="p-3 flex items-center justify-between gap-2 hover:bg-gray-50 flex-wrap">
+                      <div>
+                        <div className="font-mono font-bold text-gray-950 text-xs sm:text-sm">{item.partNumber}</div>
+                        <div className="text-gray-700 text-xs">
+                          {item.description} &nbsp;·&nbsp; 📍{item.location} &nbsp;·&nbsp; Qty: <strong>{item.quantity}</strong>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => onEditPart(item)}
+                          className="px-2.5 py-1 bg-[#0066a1] hover:bg-[#004e7c] text-white rounded text-xs font-bold border border-black cursor-pointer"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => onDeletePart(item.partNumber)}
+                          className="px-2.5 py-1 bg-[#c0392b] hover:bg-[#962d22] text-white rounded text-xs font-bold border border-black cursor-pointer"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ADD NEW */}
+          {activeTab === 'add' && (
+            <form onSubmit={handleAddNewSubmit} className="space-y-4">
+              <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
+                Add New Inventory Item
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Part Number *</label>
+                  <input
+                    type="text"
+                    value={newPn}
+                    onChange={e => setNewPn(e.target.value)}
+                    placeholder="e.g. WL-2040-HD"
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs font-mono font-bold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Location *</label>
+                  <input
+                    type="text"
+                    value={newLoc}
+                    onChange={e => setNewLoc(e.target.value)}
+                    placeholder="e.g. Shelf B-4, Drawer 2"
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Description *</label>
+                <input
+                  type="text"
+                  value={newDesc}
+                  onChange={e => setNewDesc(e.target.value)}
+                  placeholder="e.g. Heavy Duty Sinker Bar 1.5-inch"
+                  className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Stock Quantity *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newQty}
+                    onChange={e => setNewQty(e.target.value)}
+                    placeholder="0"
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs font-bold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Low-Stock Alert Min</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newThreshold}
+                    onChange={e => setNewThreshold(e.target.value)}
+                    placeholder={`Default: ${globalThreshold}`}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Remarks / Notes</label>
+                <textarea
+                  rows={2}
+                  value={newRemarks}
+                  onChange={e => setNewRemarks(e.target.value)}
+                  placeholder="Tool strings, serial notes, certifications..."
+                  className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-[#1a7a3c] hover:bg-[#145a2c] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Add Item to Inventory</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* TAB: IMPORT / EXPORT */}
+          {activeTab === 'import' && (
+            <div className="space-y-4">
+              <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
+                Import / Export Stock List
+              </div>
+
+              <div className="p-3 bg-blue-50 border-2 border-blue-200 rounded-lg text-xs text-blue-900 leading-relaxed">
+                Upload a <strong>JSON</strong> or <strong>CSV</strong> file to batch import or update parts.<br />
+                <strong>CSV headers expected:</strong> <code>partNumber, description, location, quantity, threshold, remarks</code>
+              </div>
+
+              <div className="p-4 border-2 border-dashed border-gray-400 rounded-lg text-center bg-gray-50">
+                <label className="cursor-pointer inline-flex flex-col items-center">
+                  <Upload className="w-8 h-8 text-gray-500 mb-1" />
+                  <span className="font-bold text-xs text-gray-800">Select CSV or JSON File to Import</span>
+                  <input
+                    type="file"
+                    accept=".csv,.json"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div className="pt-2 flex flex-wrap gap-2.5">
+                <button
+                  onClick={onExportCSV}
+                  className="px-4 py-2 bg-[#1a7a3c] hover:bg-[#145a2c] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export CSV Report</span>
+                </button>
+
+                <button
+                  onClick={onClearAll}
+                  className="px-4 py-2 bg-[#c0392b] hover:bg-[#962d22] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Clear All Inventory</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: SETTINGS */}
+          {activeTab === 'settings' && (
+            <div className="space-y-6">
+              {/* Change Password */}
+              <form onSubmit={handlePasswordChange} className="space-y-3 max-w-sm">
+                <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1">
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Change Admin Password</span>
+                </div>
+
+                {passError && (
+                  <div className="p-2 bg-red-50 text-[#c0392b] border border-red-300 rounded text-xs font-semibold">
+                    {passError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    value={curPass}
+                    onChange={e => setCurPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">New Password (Min 6 chars)</label>
+                  <input
+                    type="password"
+                    value={newPass}
+                    onChange={e => setNewPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmPass}
+                    onChange={e => setConfirmPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-[#8e44ad] hover:bg-[#732d91] text-white rounded-lg font-bold border-2 border-black cursor-pointer text-xs"
+                >
+                  Change Password
+                </button>
+              </form>
+
+              <hr className="border-gray-300" />
+
+              {/* Global Threshold */}
+              <div className="max-w-sm space-y-2">
+                <div className="text-xs font-bold text-[#003057] uppercase tracking-wide">
+                  Global Low-Stock Threshold Default
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    value={threshInput}
+                    onChange={e => setThreshInput(e.target.value)}
+                    className="w-24 p-2 border-2 border-black rounded-lg text-xs font-bold"
+                  />
+                  <button
+                    onClick={() => {
+                      const v = parseInt(threshInput, 10);
+                      if (isNaN(v) || v < 0) {
+                        showToast('Enter a valid non-negative number.', 'error');
+                        return;
+                      }
+                      onSaveGlobalThreshold(v);
+                    }}
+                    className="px-3 py-1.5 bg-[#16a085] hover:bg-[#117a65] text-white rounded-lg font-bold border-2 border-black cursor-pointer text-xs"
+                  >
+                    Save Default Threshold
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500">
+                  Applied to items that do not specify a custom threshold. 0 means alerts trigger only when completely
+                  depleted.
+                </p>
+              </div>
+
+              <hr className="border-gray-300" />
+
+              {/* Reset to Wireline Sample Data */}
+              <div className="max-w-md space-y-2">
+                <div className="text-xs font-bold text-[#003057] uppercase tracking-wide">
+                  Reset Demo Wireline Parts
+                </div>
+                <button
+                  onClick={onResetSampleData}
+                  className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-bold border-2 border-black cursor-pointer text-xs flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reload Default Wireline Lab Inventory</span>
+                </button>
+                <p className="text-[11px] text-gray-500">
+                  Resets the IndexedDB table with standard Schlumberger Wireline laboratory parts.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-3 bg-gray-100 border-t border-gray-300 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-gray-800 hover:bg-black text-white text-xs font-bold rounded border border-black cursor-pointer"
+          >
+            Close Admin Panel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

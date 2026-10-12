@@ -1,0 +1,6 @@
+{
+  "name": "WL Lab Inventory",
+  "description": "Wireline Laboratory Parts & Stock Manager with high-performance IndexedDB local storage and automated Microsoft OneDrive background synchronization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
