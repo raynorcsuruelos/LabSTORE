@@ -37,11 +37,39 @@ interface PendingAdminAction {
 function InventoryApp() {
   const { showToast } = useToast();
 
-  // Dexie Reactive Live Queries
-  const allStores = useLiveQuery(() => db.stores.toArray(), []) || [];
-  const allItems = useLiveQuery(() => db.inventory.toArray(), []) || [];
-  const history = useLiveQuery(() => db.history.orderBy('id').reverse().toArray(), []) || [];
-  const globalThreshold = useLiveQuery(() => getSetting<number>('globalThreshold', 0), []) ?? 0;
+  // Dexie Reactive Live Queries (Protected against render crashes)
+  const allStores = useLiveQuery(async () => {
+    try {
+      const s = await db.stores.toArray();
+      return s.length > 0 ? s : DEFAULT_STORES;
+    } catch {
+      return DEFAULT_STORES;
+    }
+  }, []) ?? DEFAULT_STORES;
+
+  const allItems = useLiveQuery(async () => {
+    try {
+      return await db.inventory.toArray();
+    } catch {
+      return [];
+    }
+  }, []) ?? [];
+
+  const history = useLiveQuery(async () => {
+    try {
+      return await db.history.orderBy('id').reverse().toArray();
+    } catch {
+      return [];
+    }
+  }, []) ?? [];
+
+  const globalThreshold = useLiveQuery(async () => {
+    try {
+      return await getSetting<number>('globalThreshold', 0);
+    } catch {
+      return 0;
+    }
+  }, []) ?? 0;
 
   // Active Sub-Store State (Initial Store choice prompt if not set)
   const [currentStoreId, setCurrentStoreId] = useState<string>(() => {

@@ -49,7 +49,7 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
 
   useEffect(() => {
     // Load queued mutations
-    db.syncQueue.toArray().then(items => setQueueItems(items));
+    db.syncQueue.toArray().then(items => setQueueItems(items)).catch(() => setQueueItems([]));
     // Load cloud snapshot
     if (activeTab === 'inspector') {
       loadCloudData();

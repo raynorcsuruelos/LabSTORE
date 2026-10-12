@@ -10,31 +10,13 @@ export class WLLabDatabase extends Dexie {
   settings!: Table<{ key: string; value: any }, string>;
 
   constructor() {
-    super('WLLabInventoryDB');
+    super('WLLabInventoryDB_v2');
     this.version(1).stores({
-      inventory: 'partNumber, description, location, quantity, updatedAt',
-      history: '++id, ts, action, partNumber',
-      syncQueue: '++id, status, timestamp, action, partNumber',
-      settings: 'key'
-    });
-
-    // Version 2: Multi-Store Support with SubStore table and compound item keys
-    this.version(2).stores({
       stores: 'id, name, code, createdAt',
       inventory: 'id, storeId, partNumber, description, location, quantity, updatedAt',
       history: '++id, storeId, ts, action, partNumber',
       syncQueue: '++id, storeId, status, timestamp, action, partNumber',
       settings: 'key'
-    }).upgrade(async tx => {
-      // Migration: assign legacy inventory items to the default store
-      const legacyItems = await tx.table('inventory').toArray();
-      for (const item of legacyItems) {
-        if (!item.storeId) {
-          item.storeId = 'whe';
-          item.id = `whe:${item.partNumber}`;
-          await tx.table('inventory').put(item);
-        }
-      }
     });
   }
 }
@@ -104,6 +86,16 @@ export const DEFAULT_ONEDRIVE_CONFIG: OneDriveConfig = {
 
 // Seed database on first launch
 export async function initDatabase() {
+  try {
+    Dexie.delete('WLLabInventoryDB').catch(() => {});
+  } catch {
+    // ignore
+  }
+
+  if (!db.isOpen()) {
+    await db.open();
+  }
+
   await initializeSecurity();
 
   // 1. Initialize Sub-Stores
