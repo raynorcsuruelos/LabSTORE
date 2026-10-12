@@ -1,5 +1,18 @@
 import React from 'react';
-import { Bell, Lock, HelpCircle, Cloud, RefreshCw, AlertTriangle, WifiOff, CheckCircle2, ShieldCheck, LogOut } from 'lucide-react';
+import {
+  Bell,
+  Lock,
+  HelpCircle,
+  Cloud,
+  RefreshCw,
+  AlertTriangle,
+  WifiOff,
+  CheckCircle2,
+  ShieldCheck,
+  LogOut,
+  Building2,
+  ChevronDown
+} from 'lucide-react';
 import { SyncServiceState } from '../services/oneDriveSync';
 
 interface HeaderProps {
@@ -12,6 +25,9 @@ interface HeaderProps {
   onQuickSync: () => void;
   isAdmin: boolean;
   onLockAdmin: () => void;
+  currentStoreName: string;
+  currentStoreCode: string;
+  onOpenStoreSelect: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,7 +39,10 @@ export const Header: React.FC<HeaderProps> = ({
   syncState,
   onQuickSync,
   isAdmin,
-  onLockAdmin
+  onLockAdmin,
+  currentStoreName,
+  currentStoreCode,
+  onOpenStoreSelect
 }) => {
   const getSyncBadge = () => {
     if (!syncState.isOnline) {
@@ -99,6 +118,20 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Header Controls */}
       <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+        {/* Sub-Store Selector Button */}
+        <button
+          onClick={onOpenStoreSelect}
+          title="Switch Sub-Store (Sonde Lab, E-Lab, WHE...)"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#002240] hover:bg-[#001830] text-white rounded-lg border-2 border-black/40 text-xs sm:text-sm font-bold cursor-pointer shadow-sm active:scale-95 transition"
+        >
+          <Building2 className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+          <span className="font-bold text-amber-100">{currentStoreName}</span>
+          <span className="text-[10px] bg-[#0066a1] px-1.5 py-0.5 rounded font-mono text-white hidden sm:inline border border-white/20">
+            {currentStoreCode}
+          </span>
+          <ChevronDown className="w-3 h-3 text-blue-200" />
+        </button>
+
         {/* OneDrive Sync Pill and Trigger */}
         <div className="flex items-center gap-1 bg-black/25 p-1 rounded-lg border border-white/10">
           <button

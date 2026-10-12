@@ -11,16 +11,22 @@ import {
   Upload,
   AlertCircle,
   CheckCircle,
-  RotateCcw
+  RotateCcw,
+  Building2,
+  Shield,
+  KeyRound,
+  ArrowRight
 } from 'lucide-react';
-import { InventoryItem } from '../types/inventory';
+import { InventoryItem, SubStore } from '../types/inventory';
 import { getSetting, setSetting } from '../db/dexieDb';
-import { verifyAdminPassword, setAdminPasswordSecure } from '../services/security';
+import { verifyAdminPassword, setAdminPasswordSecure, setStoreAdminPassword } from '../services/security';
 
 interface AdminModalProps {
   isOpen: boolean;
   onClose: () => void;
   items: InventoryItem[];
+  stores: SubStore[];
+  currentStoreId: string;
   globalThreshold: number;
   onApplyAdjust: (
     partNumber: string,
@@ -38,6 +44,9 @@ interface AdminModalProps {
   onClearAll: () => void;
   onResetSampleData: () => void;
   onSaveGlobalThreshold: (val: number) => void;
+  onCreateStore: (name: string, code: string, description: string, password: string) => void;
+  onDeleteStore: (storeId: string) => void;
+  onSwitchStore: (storeId: string) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info' | 'warn') => void;
 }
 
@@ -45,6 +54,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   isOpen,
   onClose,
   items,
+  stores,
+  currentStoreId,
   globalThreshold,
   onApplyAdjust,
   onWithdraw,
@@ -56,11 +67,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onClearAll,
   onResetSampleData,
   onSaveGlobalThreshold,
+  onCreateStore,
+  onDeleteStore,
+  onSwitchStore,
   showToast
 }) => {
   if (!isOpen) return null;
 
-  const [activeTab, setActiveTab] = useState<'adjust' | 'edit' | 'add' | 'import' | 'settings'>('adjust');
+  const [activeTab, setActiveTab] = useState<'adjust' | 'edit' | 'add' | 'import' | 'stores' | 'settings'>('adjust');
 
   // Adjust Tab State
   const [selectedPartNumber, setSelectedPartNumber] = useState('');
@@ -89,6 +103,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // Global threshold state
   const [threshInput, setThreshInput] = useState(String(globalThreshold));
 
+  // Store Management Form State
+  const [storeNameInput, setStoreNameInput] = useState('');
+  const [storeCodeInput, setStoreCodeInput] = useState('');
+  const [storeDescInput, setStoreDescInput] = useState('');
+  const [storePassInput, setStorePassInput] = useState('');
+
+  // Store Specific Password Change State
+  const [editingStorePassId, setEditingStorePassId] = useState<string | null>(null);
+  const [targetStoreNewPass, setTargetStoreNewPass] = useState('');
+
+  const currentStore = stores.find(s => s.id === currentStoreId);
   const selectedItem = items.find(i => i.partNumber === selectedPartNumber);
 
   const handleAdjustSubmit = (e: React.FormEvent) => {
@@ -130,11 +155,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
 
     if (items.some(i => i.partNumber.toLowerCase() === newPn.trim().toLowerCase())) {
-      showToast('Part number already exists in inventory.', 'error');
+      showToast(`Part number ${newPn} already exists in ${currentStore?.name || 'this store'}.`, 'error');
       return;
     }
 
     onAddNewItem({
+      storeId: currentStoreId,
       partNumber: newPn.trim(),
       description: newDesc.trim(),
       location: newLoc.trim(),
@@ -149,14 +175,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setNewQty('');
     setNewThreshold('');
     setNewRemarks('');
-    showToast(`Added part ${newPn}!`, 'success');
+    showToast(`Added part ${newPn} to ${currentStore?.name || 'store'}!`, 'success');
   };
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassError('');
 
-    const verifyRes = await verifyAdminPassword(curPass);
+    const verifyRes = await verifyAdminPassword(curPass, currentStoreId);
     if (!verifyRes.success) {
       setPassError(verifyRes.message || 'Current password is incorrect.');
       return;
@@ -181,6 +207,41 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     showToast('Admin password securely updated with cryptographic hashing!', 'success');
   };
 
+  const handleCreateStoreSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!storeNameInput.trim() || !storeCodeInput.trim()) {
+      showToast('Store name and code are required.', 'error');
+      return;
+    }
+    if (storePassInput.length < 6) {
+      showToast('Store admin password must be at least 6 characters.', 'error');
+      return;
+    }
+
+    onCreateStore(
+      storeNameInput.trim(),
+      storeCodeInput.trim().toUpperCase(),
+      storeDescInput.trim() || `${storeNameInput.trim()} Wireline Store`,
+      storePassInput
+    );
+
+    setStoreNameInput('');
+    setStoreCodeInput('');
+    setStoreDescInput('');
+    setStorePassInput('');
+  };
+
+  const handleSaveStoreSpecificPassword = async (storeId: string) => {
+    if (targetStoreNewPass.length < 6) {
+      showToast('Password must be at least 6 characters.', 'error');
+      return;
+    }
+    await setStoreAdminPassword(storeId, targetStoreNewPass);
+    setEditingStorePassId(null);
+    setTargetStoreNewPass('');
+    showToast('Store-specific admin password assigned successfully!', 'success');
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -193,9 +254,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         if (file.name.endsWith('.json')) {
           const parsed = JSON.parse(content);
           if (!Array.isArray(parsed)) throw new Error('JSON file must contain an array of parts.');
-          records = parsed;
+          records = parsed.map(r => ({
+            ...r,
+            storeId: r.storeId || currentStoreId,
+            id: r.id || `${r.storeId || currentStoreId}:${r.partNumber}`
+          }));
         } else {
-          // CSV Parser
           const lines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
           if (lines.length < 2) throw new Error('CSV is empty or missing data rows.');
           const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
@@ -207,9 +271,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               row[h] = vals[idx] || '';
             });
 
-            if (row.partnumber || row['part number']) {
+            const pn = row.partnumber || row['part number'];
+            if (pn) {
               records.push({
-                partNumber: row.partnumber || row['part number'],
+                id: `${currentStoreId}:${pn}`,
+                storeId: currentStoreId,
+                partNumber: pn,
                 description: row.description || '',
                 location: row.location || 'Bin',
                 quantity: parseInt(row.quantity || row.qty || '0', 10) || 0,
@@ -245,7 +312,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         <div className="bg-[#003057] text-white px-5 py-3.5 flex items-center justify-between border-b-3 border-black">
           <div className="flex items-center gap-2">
             <Sliders className="w-5 h-5 text-amber-300" />
-            <h3 className="font-bold text-base sm:text-lg">Wireline Admin Panel</h3>
+            <div>
+              <h3 className="font-bold text-base sm:text-lg leading-tight">Wireline Admin Panel</h3>
+              <p className="text-[11px] text-blue-200">
+                Managing Sub-Store: <strong className="text-white">{currentStore?.name || 'Store'}</strong> ({currentStore?.code})
+              </p>
+            </div>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-white/20 rounded cursor-pointer transition">
             <X className="w-5 h-5" />
@@ -285,6 +357,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             ➕ Add New Item
           </button>
           <button
+            onClick={() => setActiveTab('stores')}
+            className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
+              activeTab === 'stores'
+                ? 'bg-white border-black text-[#003057]'
+                : 'border-transparent text-gray-600 hover:text-black'
+            }`}
+          >
+            🏢 Sub-Stores ({stores.length})
+          </button>
+          <button
             onClick={() => setActiveTab('import')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
               activeTab === 'import'
@@ -312,7 +394,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {activeTab === 'adjust' && (
             <form onSubmit={handleAdjustSubmit} className="space-y-4">
               <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
-                Adjust Existing Stock Quantities
+                Adjust Existing Stock Quantities — {currentStore?.name}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -423,7 +505,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-[#003057] uppercase tracking-wide">
-                  Edit or Delete Parts ({items.length})
+                  Edit or Delete Parts in {currentStore?.name} ({items.length})
                 </span>
                 <input
                   type="text"
@@ -436,7 +518,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
               <div className="border-2 border-gray-300 rounded-lg max-h-80 overflow-y-auto divide-y divide-gray-200 bg-white">
                 {filteredEditList.length === 0 ? (
-                  <div className="p-6 text-center text-gray-400">No parts found matching filter.</div>
+                  <div className="p-6 text-center text-gray-400">No parts found matching filter in {currentStore?.name}.</div>
                 ) : (
                   filteredEditList.map(item => (
                     <div key={item.partNumber} className="p-3 flex items-center justify-between gap-2 hover:bg-gray-50 flex-wrap">
@@ -467,11 +549,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             </div>
           )}
 
-          {/* TAB: ADD NEW */}
+          {/* TAB: ADD NEW ITEM */}
           {activeTab === 'add' && (
             <form onSubmit={handleAddNewSubmit} className="space-y-4">
               <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
-                Add New Inventory Item
+                Add New Inventory Item to {currentStore?.name}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -554,21 +636,201 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   className="px-4 py-2 bg-[#1a7a3c] hover:bg-[#145a2c] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
                 >
                   <PlusCircle className="w-4 h-4" />
-                  <span>Add Item to Inventory</span>
+                  <span>Add Item to {currentStore?.name}</span>
                 </button>
               </div>
             </form>
+          )}
+
+          {/* TAB: SUB-STORES MANAGEMENT */}
+          {activeTab === 'stores' && (
+            <div className="space-y-6">
+              {/* Existing Sub-Stores List */}
+              <div>
+                <div className="text-sm font-bold text-[#003057] uppercase tracking-wide mb-2 flex items-center justify-between">
+                  <span>Configured Wireline Sub-Stores ({stores.length})</span>
+                  <span className="text-xs text-gray-500 font-normal">Each store maintains its own parts, stock &amp; admin</span>
+                </div>
+
+                <div className="space-y-3">
+                  {stores.map(s => {
+                    const isCurrent = s.id === currentStoreId;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`p-3.5 rounded-xl border-2 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          isCurrent ? 'border-[#0066a1] bg-[#f0f7fd]' : 'border-gray-300 bg-white'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-gray-900 text-sm sm:text-base">{s.name}</span>
+                            <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-[#003057] text-white">
+                              {s.code}
+                            </span>
+                            {isCurrent && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                Active Store
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-600">{s.description}</p>
+                          <div className="text-[11px] text-gray-500 flex items-center gap-1">
+                            <Shield className="w-3 h-3 text-emerald-600" />
+                            <span>Assigned Store Admin Password Active</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                          {!isCurrent && (
+                            <button
+                              onClick={() => {
+                                onSwitchStore(s.id);
+                                showToast(`Switched active store to ${s.name}`, 'info');
+                              }}
+                              className="px-3 py-1.5 bg-[#0066a1] hover:bg-[#004e7c] text-white text-xs font-bold rounded-lg border border-black cursor-pointer shadow-xs active:scale-95 flex items-center gap-1"
+                            >
+                              <span>Switch to Store</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => {
+                              setEditingStorePassId(editingStorePassId === s.id ? null : s.id);
+                              setTargetStoreNewPass('');
+                            }}
+                            className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold rounded-lg border border-gray-400 cursor-pointer flex items-center gap-1"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>Assign Password</span>
+                          </button>
+
+                          {stores.length > 1 && (
+                            <button
+                              onClick={() => onDeleteStore(s.id)}
+                              className="p-1.5 text-red-600 hover:text-white hover:bg-red-600 rounded-lg border border-red-300 transition cursor-pointer"
+                              title="Delete Sub-Store"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Inline password editor for this store */}
+                        {editingStorePassId === s.id && (
+                          <div className="w-full pt-3 mt-2 border-t border-gray-200 flex items-center gap-2">
+                            <input
+                              type="password"
+                              placeholder={`New password for ${s.name} (min 6 chars)`}
+                              value={targetStoreNewPass}
+                              onChange={e => setTargetStoreNewPass(e.target.value)}
+                              className="flex-1 p-2 border-2 border-black rounded-lg text-xs"
+                            />
+                            <button
+                              onClick={() => handleSaveStoreSpecificPassword(s.id)}
+                              className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                            >
+                              Save Password
+                            </button>
+                            <button
+                              onClick={() => setEditingStorePassId(null)}
+                              className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg text-xs font-bold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Add New Sub-Store Form */}
+              <div className="p-4 bg-gray-50 border-2 border-gray-300 rounded-xl space-y-3">
+                <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-[#0066a1]" />
+                  <span>Create New Sub-Store</span>
+                </div>
+
+                <form onSubmit={handleCreateStoreSubmit} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Store Name *</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Perforating Lab, Rig Prep Shop"
+                        value={storeNameInput}
+                        onChange={e => setStoreNameInput(e.target.value)}
+                        className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Store Code * (Short code)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. PERF, PREP, MECH"
+                        value={storeCodeInput}
+                        onChange={e => setStoreCodeInput(e.target.value)}
+                        className="w-full p-2 border-2 border-black rounded-lg text-xs uppercase font-mono font-bold"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Description</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Gun loading, ballistic hardware and detonator store"
+                      value={storeDescInput}
+                      onChange={e => setStoreDescInput(e.target.value)}
+                      className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                      Assigned Administrator Password * (Min 6 chars)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="Enter administrator password for this store"
+                      value={storePassInput}
+                      onChange={e => setStorePassInput(e.target.value)}
+                      className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                      required
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      This password will authenticate adjustments and withdrawals specifically for this sub-store.
+                    </p>
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-[#1a7a3c] hover:bg-[#145a2c] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95 text-xs"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>Create Sub-Store</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           )}
 
           {/* TAB: IMPORT / EXPORT */}
           {activeTab === 'import' && (
             <div className="space-y-4">
               <div className="text-sm font-bold text-[#003057] uppercase tracking-wide">
-                Import / Export Stock List
+                Import / Export Stock List for {currentStore?.name}
               </div>
 
               <div className="p-3 bg-blue-50 border-2 border-blue-200 rounded-lg text-xs text-blue-900 leading-relaxed">
-                Upload a <strong>JSON</strong> or <strong>CSV</strong> file to batch import or update parts.<br />
+                Upload a <strong>JSON</strong> or <strong>CSV</strong> file to batch import or update parts for <strong>{currentStore?.name}</strong>.<br />
                 <strong>CSV headers expected:</strong> <code>partNumber, description, location, quantity, threshold, remarks</code>
               </div>
 
@@ -599,7 +861,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   className="px-4 py-2 bg-[#c0392b] hover:bg-[#962d22] text-white rounded-lg font-bold border-2 border-black cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
                 >
                   <Trash2 className="w-4 h-4" />
-                  <span>Clear All Inventory</span>
+                  <span>Clear Store Inventory</span>
                 </button>
               </div>
             </div>
@@ -612,7 +874,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <form onSubmit={handlePasswordChange} className="space-y-3 max-w-sm">
                 <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1">
                   <Key className="w-3.5 h-3.5" />
-                  <span>Change Admin Password</span>
+                  <span>Change Master Admin Password</span>
                 </div>
 
                 {passError && (
@@ -709,10 +971,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-bold border-2 border-black cursor-pointer text-xs flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reload Default Wireline Lab Inventory</span>
+                  <span>Reload Default Stores &amp; Wireline Inventory</span>
                 </button>
                 <p className="text-[11px] text-gray-500">
-                  Resets the IndexedDB table with standard Schlumberger Wireline laboratory parts.
+                  Resets the IndexedDB table with standard Schlumberger Wireline laboratory parts for Sonde Lab, E-Lab, and WHE.
                 </p>
               </div>
             </div>

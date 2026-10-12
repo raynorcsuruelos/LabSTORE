@@ -1,5 +1,18 @@
+export interface SubStore {
+  id: string; // e.g. "sonde-lab", "e-lab", "whe"
+  name: string; // e.g. "Sonde Lab", "E-Lab", "WHE"
+  code: string; // e.g. "SONDE", "ELAB", "WHE"
+  description: string;
+  adminPasswordHash?: {
+    hash: string;
+    salt: string;
+  };
+  createdAt: string;
+}
+
 export interface InventoryItem {
-  id?: number;
+  id?: string; // unique key: `${storeId}:${partNumber}`
+  storeId: string; // sub-store identifier
   partNumber: string;
   description: string;
   location: string;
@@ -12,6 +25,7 @@ export interface InventoryItem {
 
 export interface HistoryEntry {
   id?: number;
+  storeId?: string;
   ts: string;
   action: string;
   partNumber: string;
@@ -20,10 +34,11 @@ export interface HistoryEntry {
   note?: string;
 }
 
-export type SyncActionType = 'CREATE' | 'UPDATE' | 'DELETE' | 'ADJUST' | 'BULK_IMPORT';
+export type SyncActionType = 'CREATE' | 'UPDATE' | 'DELETE' | 'ADJUST' | 'BULK_IMPORT' | 'STORE_MUTATION';
 
 export interface SyncQueueItem {
   id?: number;
+  storeId?: string;
   action: SyncActionType;
   partNumber: string;
   payload: any;
@@ -51,6 +66,7 @@ export interface OneDriveConfig {
 export interface OneDriveCloudSnapshot {
   lastUpdated: string;
   source: string;
+  stores?: SubStore[];
   itemCount: number;
   items: InventoryItem[];
   historyCount: number;

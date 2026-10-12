@@ -208,9 +208,12 @@ class OneDriveSyncService {
       const currentInventory = await db.inventory.toArray();
       const historyCount = await db.history.count();
 
+      const currentStores = await db.stores.toArray();
+
       const snapshot: OneDriveCloudSnapshot = {
         lastUpdated: new Date().toISOString(),
         source: 'WL Lab Inventory Web Client (Dexie IndexedDB)',
+        stores: currentStores,
         itemCount: currentInventory.length,
         items: currentInventory,
         historyCount

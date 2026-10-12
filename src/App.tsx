@@ -8,10 +8,11 @@ import {
   adjustItemStock,
   logHistory,
   enqueueSync,
-  INITIAL_ITEMS
+  DEFAULT_STORES
 } from './db/dexieDb';
 import { oneDriveSyncService, SyncServiceState } from './services/oneDriveSync';
-import { InventoryItem } from './types/inventory';
+import { InventoryItem, SubStore } from './types/inventory';
+import { hashPassword } from './services/security';
 import { ToastProvider, useToast } from './components/Toast';
 import { Header } from './components/Header';
 import { NotificationPanel } from './components/NotificationPanel';
@@ -25,6 +26,7 @@ import { AdminModal } from './components/AdminModal';
 import { EditPartModal } from './components/EditPartModal';
 import { SyncStatusModal } from './components/SyncStatusModal';
 import { HelpModal } from './components/HelpModal';
+import { StoreSelectModal } from './components/StoreSelectModal';
 import { BarChart3, ExternalLink } from 'lucide-react';
 
 interface PendingAdminAction {
@@ -35,10 +37,30 @@ interface PendingAdminAction {
 function InventoryApp() {
   const { showToast } = useToast();
 
-  // Dexie Reactive Live Queries (Automatic UI updates on any IndexedDB mutation)
-  const items = useLiveQuery(() => db.inventory.toArray(), []) || [];
+  // Dexie Reactive Live Queries
+  const allStores = useLiveQuery(() => db.stores.toArray(), []) || [];
+  const allItems = useLiveQuery(() => db.inventory.toArray(), []) || [];
   const history = useLiveQuery(() => db.history.orderBy('id').reverse().toArray(), []) || [];
   const globalThreshold = useLiveQuery(() => getSetting<number>('globalThreshold', 0), []) ?? 0;
+
+  // Active Sub-Store State (Initial Store choice prompt if not set)
+  const [currentStoreId, setCurrentStoreId] = useState<string>(() => {
+    return localStorage.getItem('wllab_default_store') || 'sonde-lab';
+  });
+  const [storeSelectOpen, setStoreSelectOpen] = useState<boolean>(() => {
+    return !localStorage.getItem('wllab_default_store');
+  });
+
+  // Effective Current Store
+  const currentStore = useMemo(() => {
+    return allStores.find(s => s.id === currentStoreId) || allStores[0] || DEFAULT_STORES[0];
+  }, [allStores, currentStoreId]);
+
+  // Filter Items strictly belonging to the active Sub-Store
+  const storeItems = useMemo(() => {
+    const targetStoreId = currentStore?.id || 'sonde-lab';
+    return allItems.filter(i => (i.storeId || 'whe') === targetStoreId);
+  }, [allItems, currentStore]);
 
   // Background Sync Engine State
   const [syncState, setSyncState] = useState<SyncServiceState>({
@@ -131,7 +153,7 @@ function InventoryApp() {
     };
   }, []);
 
-  // Compute Low-Stock & Out-of-Stock items
+  // Compute Low-Stock & Out-of-Stock items for active store
   const thresholdOf = (item: InventoryItem) => {
     return item.threshold !== undefined && item.threshold !== null && item.threshold !== 0
       ? item.threshold
@@ -139,16 +161,16 @@ function InventoryApp() {
   };
 
   const lowStockItems = useMemo(() => {
-    return items.filter(item => item.quantity <= thresholdOf(item));
-  }, [items, globalThreshold]);
+    return storeItems.filter(item => item.quantity <= thresholdOf(item));
+  }, [storeItems, globalThreshold]);
 
   const outOfStockItems = useMemo(() => {
-    return items.filter(item => item.quantity <= 0);
-  }, [items]);
+    return storeItems.filter(item => item.quantity <= 0);
+  }, [storeItems]);
 
   // Filtered Items for Display
   const filteredItems = useMemo(() => {
-    let result = items;
+    let result = storeItems;
 
     // Apply Filter Chips
     if (activeFilter === 'in_stock') {
@@ -172,7 +194,19 @@ function InventoryApp() {
     }
 
     return result;
-  }, [items, searchQuery, activeFilter, globalThreshold]);
+  }, [storeItems, searchQuery, activeFilter, globalThreshold]);
+
+  // Store Switching & Selection
+  const handleSelectStore = (storeId: string, setAsDefault: boolean) => {
+    setCurrentStoreId(storeId);
+    if (setAsDefault) {
+      localStorage.setItem('wllab_default_store', storeId);
+    }
+    setStoreSelectOpen(false);
+    setSearchQuery('');
+    const targetStore = allStores.find(s => s.id === storeId);
+    showToast(`Switched to ${targetStore?.name || 'Store'}`, 'info');
+  };
 
   // Admin Request Handlers
   const handleRequestAdjust = (item: InventoryItem) => {
@@ -212,7 +246,7 @@ function InventoryApp() {
     setIsAdmin(true);
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
-    showToast('Admin access granted!', 'success');
+    showToast(`Admin access granted for ${currentStore?.name || 'Store'}!`, 'success');
 
     if (pendingAdminAction) {
       const pending = pendingAdminAction;
@@ -236,7 +270,7 @@ function InventoryApp() {
     }
   };
 
-  // Stock Mutation Actions
+  // Stock Mutation Actions for active store
   const handleApplyAdjust = async (
     partNumber: string,
     action: 'set' | 'add' | 'sub',
@@ -248,9 +282,10 @@ function InventoryApp() {
       showToast('Admin authorization required to adjust stock.', 'error');
       return;
     }
-    const res = await adjustItemStock(partNumber, action, qty, reason, threshold);
+    const storeId = currentStore.id;
+    const res = await adjustItemStock(storeId, partNumber, action, qty, reason, threshold);
     if (res.success && res.newItem) {
-      showToast(`Stock updated for ${partNumber} (New Qty: ${res.newItem.quantity})`, 'success');
+      showToast(`Stock updated for ${partNumber} in ${currentStore.name} (New Qty: ${res.newItem.quantity})`, 'success');
     } else if (res.error) {
       showToast(res.error, 'error');
     }
@@ -261,82 +296,148 @@ function InventoryApp() {
       showToast('Admin authorization required to withdraw stock.', 'error');
       return;
     }
-    const res = await adjustItemStock(partNumber, 'withdraw', 0, reason);
+    const storeId = currentStore.id;
+    const res = await adjustItemStock(storeId, partNumber, 'withdraw', 0, reason);
     if (res.success) {
-      showToast(`All units of ${partNumber} withdrawn to 0.`, 'warn');
+      showToast(`All units of ${partNumber} in ${currentStore.name} withdrawn to 0.`, 'warn');
     } else if (res.error) {
       showToast(res.error, 'error');
     }
   };
 
   const handleAddNewItem = async (newItemData: Omit<InventoryItem, 'updatedAt'>) => {
+    const storeId = currentStore.id;
     const item: InventoryItem = {
       ...newItemData,
+      storeId,
+      id: `${storeId}:${newItemData.partNumber}`,
       updatedAt: new Date().toISOString()
     };
     await db.inventory.put(item);
-    await logHistory('New Item Added', item.partNumber, item.description, item.quantity, item.remarks || '');
-    await enqueueSync('CREATE', item.partNumber, item);
-    showToast(`Added part ${item.partNumber} to inventory!`, 'success');
+    await logHistory('New Item Added', item.partNumber, item.description, item.quantity, item.remarks || '', storeId);
+    await enqueueSync('CREATE', item.partNumber, item, storeId);
+    showToast(`Added part ${item.partNumber} to ${currentStore.name}!`, 'success');
   };
 
   const handleSaveEditPart = async (updated: InventoryItem, originalPartNumber: string) => {
+    const storeId = currentStore.id;
+    const originalId = `${storeId}:${originalPartNumber}`;
+    const newId = `${storeId}:${updated.partNumber}`;
+
     if (originalPartNumber !== updated.partNumber) {
-      await db.inventory.delete(originalPartNumber);
-      await enqueueSync('DELETE', originalPartNumber, { partNumber: originalPartNumber });
+      await db.inventory.delete(originalId);
+      await enqueueSync('DELETE', originalPartNumber, { partNumber: originalPartNumber, storeId }, storeId);
     }
-    await db.inventory.put(updated);
+
+    const savedItem: InventoryItem = {
+      ...updated,
+      id: newId,
+      storeId
+    };
+
+    await db.inventory.put(savedItem);
     await logHistory(
       'Edit',
-      updated.partNumber,
-      updated.description,
-      updated.quantity,
-      originalPartNumber !== updated.partNumber ? `Renamed from ${originalPartNumber}` : 'Metadata updated'
+      savedItem.partNumber,
+      savedItem.description,
+      savedItem.quantity,
+      originalPartNumber !== savedItem.partNumber ? `Renamed from ${originalPartNumber}` : 'Metadata updated',
+      storeId
     );
-    await enqueueSync('UPDATE', updated.partNumber, updated);
-    showToast(`Part ${updated.partNumber} updated.`, 'success');
+    await enqueueSync('UPDATE', savedItem.partNumber, savedItem, storeId);
+    showToast(`Part ${savedItem.partNumber} updated.`, 'success');
   };
 
   const handleDeletePart = async (partNumber: string) => {
-    if (!window.confirm(`Delete part "${partNumber}" from inventory? This cannot be undone.`)) return;
-    const existing = await db.inventory.get(partNumber);
-    await db.inventory.delete(partNumber);
-    await logHistory('Deleted', partNumber, existing ? existing.description : '', 0, 'Part removed by admin');
-    await enqueueSync('DELETE', partNumber, { partNumber });
-    showToast(`Part ${partNumber} deleted.`, 'warn');
+    const storeId = currentStore.id;
+    const itemId = `${storeId}:${partNumber}`;
+    if (!window.confirm(`Delete part "${partNumber}" from ${currentStore.name}? This cannot be undone.`)) return;
+
+    const existing = await db.inventory.get(itemId);
+    await db.inventory.delete(itemId);
+    await logHistory('Deleted', partNumber, existing ? existing.description : '', 0, `Part removed from ${currentStore.name}`, storeId);
+    await enqueueSync('DELETE', partNumber, { partNumber, storeId }, storeId);
+    showToast(`Part ${partNumber} deleted from ${currentStore.name}.`, 'warn');
+  };
+
+  // Sub-Store Management
+  const handleCreateStore = async (name: string, code: string, description: string, password: string) => {
+    const slugId = code.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
+    const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+    const hash = await hashPassword(password, salt);
+
+    const newStore: SubStore = {
+      id: slugId,
+      name,
+      code: code.toUpperCase(),
+      description,
+      adminPasswordHash: { hash, salt },
+      createdAt: new Date().toISOString()
+    };
+
+    await db.stores.put(newStore);
+    await logHistory('Store Created', 'SYSTEM', `Created sub-store ${name} (${code})`, 0, 'Sub-store added', slugId);
+    await enqueueSync('STORE_MUTATION', slugId, { action: 'CREATE_STORE', store: newStore });
+    showToast(`Sub-store ${name} created with assigned administrator!`, 'success');
+  };
+
+  const handleDeleteStore = async (storeId: string) => {
+    if (allStores.length <= 1) {
+      showToast('Cannot delete the last remaining store.', 'error');
+      return;
+    }
+    const target = allStores.find(s => s.id === storeId);
+    if (!window.confirm(`Delete store "${target?.name}" and all its parts? This cannot be undone.`)) return;
+
+    await db.stores.delete(storeId);
+    const storeItemIds = allItems.filter(i => i.storeId === storeId).map(i => i.id || `${storeId}:${i.partNumber}`);
+    if (storeItemIds.length > 0) {
+      await db.inventory.bulkDelete(storeItemIds);
+    }
+
+    if (currentStoreId === storeId) {
+      const nextStore = allStores.find(s => s.id !== storeId) || allStores[0];
+      if (nextStore) {
+        setCurrentStoreId(nextStore.id);
+      }
+    }
+    showToast(`Store ${target?.name} deleted.`, 'warn');
   };
 
   const handleImportItems = async (importedList: InventoryItem[], filename: string) => {
+    const storeId = currentStore.id;
     let added = 0;
     let updated = 0;
 
     for (const record of importedList) {
       if (!record.partNumber) continue;
-      const existing = await db.inventory.get(record.partNumber);
+      const itemId = `${storeId}:${record.partNumber}`;
+      const existing = await db.inventory.get(itemId);
       if (existing) {
-        await db.inventory.put({ ...existing, ...record, updatedAt: new Date().toISOString() });
+        await db.inventory.put({ ...existing, ...record, id: itemId, storeId, updatedAt: new Date().toISOString() });
         updated++;
       } else {
-        await db.inventory.put({ ...record, updatedAt: new Date().toISOString() });
+        await db.inventory.put({ ...record, id: itemId, storeId, updatedAt: new Date().toISOString() });
         added++;
       }
     }
 
-    await logHistory('Bulk Import', 'IMPORT', `${added} added / ${updated} updated`, importedList.length, filename);
-    await enqueueSync('BULK_IMPORT', 'ALL', { count: importedList.length, file: filename });
-    showToast(`Import completed: ${added} added, ${updated} updated.`, 'success');
+    await logHistory('Bulk Import', 'IMPORT', `${added} added / ${updated} updated`, importedList.length, `${filename} (${currentStore.name})`, storeId);
+    await enqueueSync('BULK_IMPORT', 'ALL', { count: importedList.length, file: filename, storeId }, storeId);
+    showToast(`Import completed for ${currentStore.name}: ${added} added, ${updated} updated.`, 'success');
   };
 
   const handleExportCSV = () => {
-    if (items.length === 0) {
-      showToast('No inventory items to export.', 'warn');
+    if (storeItems.length === 0) {
+      showToast(`No inventory items to export for ${currentStore.name}.`, 'warn');
       return;
     }
 
-    const headers = 'Part Number,Description,Location,Quantity,Threshold,Remarks,Last Updated';
-    const csvRows = items.map(i => {
+    const headers = 'Store,Part Number,Description,Location,Quantity,Threshold,Remarks,Last Updated';
+    const csvRows = storeItems.map(i => {
       const escape = (val: any) => `"${String(val || '').replace(/"/g, '""')}"`;
       return [
+        escape(currentStore.name),
         escape(i.partNumber),
         escape(i.description),
         escape(i.location),
@@ -352,30 +453,31 @@ function InventoryApp() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `WLLabInventory_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `WLLab_${currentStore.code}_Inventory_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast('Inventory CSV exported successfully!', 'success');
+    showToast(`Inventory CSV exported for ${currentStore.name}!`, 'success');
   };
 
   const handleClearAll = async () => {
-    if (!window.confirm('CRITICAL: Delete ALL inventory items from local database? This cannot be undone.')) return;
-    await db.inventory.clear();
-    await logHistory('Clear All', 'SYSTEM', 'All inventory cleared', 0, 'Database emptied');
-    await enqueueSync('DELETE', 'ALL', { cleared: true });
-    showToast('All inventory items cleared.', 'warn');
+    const storeId = currentStore.id;
+    if (!window.confirm(`CRITICAL: Delete ALL inventory items for "${currentStore.name}"? This cannot be undone.`)) return;
+
+    const itemIds = storeItems.map(i => i.id || `${storeId}:${i.partNumber}`);
+    await db.inventory.bulkDelete(itemIds);
+    await logHistory('Clear All', 'SYSTEM', `All inventory cleared for ${currentStore.name}`, 0, 'Store database emptied', storeId);
+    await enqueueSync('DELETE', 'STORE_ALL', { cleared: true, storeId }, storeId);
+    showToast(`All inventory items cleared for ${currentStore.name}.`, 'warn');
   };
 
   const handleResetSampleData = async () => {
-    if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset?')) return;
+    if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset across all stores?')) return;
     await db.inventory.clear();
-    const seeded = INITIAL_ITEMS.map(i => ({ ...i, updatedAt: new Date().toISOString() }));
-    await db.inventory.bulkPut(seeded);
-    await logHistory('Reset Sample Data', 'SYSTEM', 'Loaded Wireline sample items', seeded.length, 'Reset to default');
-    await enqueueSync('BULK_IMPORT', 'INITIAL', { seeded: true });
-    showToast('Default Wireline items loaded into IndexedDB!', 'success');
+    await db.stores.clear();
+    await initDatabase();
+    showToast('Default Wireline items loaded into Sonde Lab, E-Lab, and WHE!', 'success');
   };
 
   const handleSaveGlobalThreshold = async (val: number) => {
@@ -398,22 +500,23 @@ function InventoryApp() {
     }
   };
 
+  // Open BlueMM default browser navigation
   const handleOpenBlueMM = () => {
-    window.open('https://www.bluemm.slb.com', '_blank', 'noopener,noreferrer');
+    window.open('https://imapp.bluemm.gt.slb.com/home', '_blank', 'noopener,noreferrer');
   };
 
-  // Determine modal copy based on pending action
+  // Context-aware login modal copy
   const loginActionTitle = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
     ? `Adjust Stock: ${pendingAdminAction.item.partNumber}`
     : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
     ? `Withdraw Stock: ${pendingAdminAction.item.partNumber}`
-    : 'Admin Authentication Required';
+    : `Admin Access: ${currentStore.name}`;
 
   const loginActionDesc = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
-    ? `Administrator credentials required to modify stock count or safety threshold for part ${pendingAdminAction.item.partNumber}.`
+    ? `Enter administrator password for ${currentStore.name} to modify stock count or safety threshold for part ${pendingAdminAction.item.partNumber}.`
     : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
-    ? `Administrator credentials required to withdraw all inventory of part ${pendingAdminAction.item.partNumber}.`
-    : 'Stock modifications, withdrawals, part edits, and imports require verified administrator privileges.';
+    ? `Enter administrator password for ${currentStore.name} to withdraw inventory for part ${pendingAdminAction.item.partNumber}.`
+    : `Enter the assigned administrator password for ${currentStore.name} (or master administrator password) to manage this sub-store.`;
 
   return (
     <div className="min-h-screen bg-[#e9edf2] flex flex-col items-center py-0 sm:py-4">
@@ -430,6 +533,9 @@ function InventoryApp() {
           onQuickSync={handleTriggerSyncNow}
           isAdmin={isAdmin}
           onLockAdmin={handleLockAdmin}
+          currentStoreName={currentStore.name}
+          currentStoreCode={currentStore.code}
+          onOpenStoreSelect={() => setStoreSelectOpen(true)}
         />
 
         {/* Low-Stock Notification Drawer */}
@@ -455,7 +561,7 @@ function InventoryApp() {
           onSearchChange={setSearchQuery}
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
-          totalCount={items.length}
+          totalCount={storeItems.length}
           filteredCount={filteredItems.length}
           lowStockCount={lowStockItems.length}
           outOfStockCount={outOfStockItems.length}
@@ -482,6 +588,7 @@ function InventoryApp() {
               <span>Inventory History &amp; Usage Trends</span>
             </button>
 
+            {/* Check BlueMM button opening https://imapp.bluemm.gt.slb.com/home */}
             <button
               onClick={handleOpenBlueMM}
               className="px-4 py-2 bg-[#0092d1] hover:bg-[#007cb3] text-white font-bold rounded-lg border-2 border-[#0066a1] cursor-pointer shadow-sm active:scale-95 flex items-center gap-1.5 transition"
@@ -492,10 +599,12 @@ function InventoryApp() {
           </div>
 
           <div className="flex items-center gap-3 text-gray-500 font-mono text-[11px]">
-            <span>Dexie DB: {items.length} items</span>
+            <span>
+              Store: <strong className="text-gray-900">{currentStore.name}</strong> ({storeItems.length} items)
+            </span>
             <span>·</span>
             <span>
-              Role: <strong className={isAdmin ? 'text-emerald-700' : 'text-gray-700'}>{isAdmin ? 'ADMIN' : 'VIEWER'}</strong>
+              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
             </span>
             <span>·</span>
             <span>Sync: {syncState.status.toUpperCase()}</span>
@@ -504,6 +613,16 @@ function InventoryApp() {
       </div>
 
       {/* MODALS */}
+      <StoreSelectModal
+        isOpen={storeSelectOpen}
+        onClose={() => setStoreSelectOpen(false)}
+        stores={allStores.length > 0 ? allStores : DEFAULT_STORES}
+        currentStoreId={currentStore.id}
+        allItems={allItems}
+        onSelectStore={handleSelectStore}
+        isInitialSelection={!localStorage.getItem('wllab_default_store')}
+      />
+
       <QuickAdjustModal
         item={adjustingItem}
         globalThreshold={globalThreshold}
@@ -524,7 +643,7 @@ function InventoryApp() {
       <HistoryModal
         isOpen={historyModalOpen}
         onClose={() => setHistoryModalOpen(false)}
-        history={history}
+        history={history.filter(h => !h.storeId || h.storeId === currentStore.id)}
         onClearHistory={handleClearHistory}
       />
 
@@ -535,6 +654,8 @@ function InventoryApp() {
           setPendingAdminAction(null);
         }}
         onLoginSuccess={handleAdminLoginSuccess}
+        storeId={currentStore.id}
+        storeName={currentStore.name}
         actionTitle={loginActionTitle}
         actionDescription={loginActionDesc}
       />
@@ -542,7 +663,9 @@ function InventoryApp() {
       <AdminModal
         isOpen={adminModalOpen}
         onClose={() => setAdminModalOpen(false)}
-        items={items}
+        items={storeItems}
+        stores={allStores.length > 0 ? allStores : DEFAULT_STORES}
+        currentStoreId={currentStore.id}
         globalThreshold={globalThreshold}
         onApplyAdjust={handleApplyAdjust}
         onWithdraw={handleWithdraw}
@@ -554,6 +677,9 @@ function InventoryApp() {
         onClearAll={handleClearAll}
         onResetSampleData={handleResetSampleData}
         onSaveGlobalThreshold={handleSaveGlobalThreshold}
+        onCreateStore={handleCreateStore}
+        onDeleteStore={handleDeleteStore}
+        onSwitchStore={id => setCurrentStoreId(id)}
         showToast={showToast}
       />
 

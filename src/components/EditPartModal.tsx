@@ -52,6 +52,8 @@ export const EditPartModal: React.FC<EditPartModalProps> = ({
     }
 
     const updated: InventoryItem = {
+      id: `${item.storeId}:${partNumber.trim()}`,
+      storeId: item.storeId,
       partNumber: partNumber.trim(),
       description: description.trim(),
       location: location.trim(),

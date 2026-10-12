@@ -6,6 +6,8 @@ interface AdminLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: () => void;
+  storeId?: string;
+  storeName?: string;
   actionTitle?: string;
   actionDescription?: string;
 }
@@ -14,6 +16,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
+  storeId,
+  storeName,
   actionTitle = 'Admin Authentication Required',
   actionDescription = 'Stock adjustments, withdrawals, and inventory configurations require verified administrator access.'
 }) => {
@@ -44,7 +48,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setLoading(true);
     setErrorMessage('');
 
-    const res = await verifyAdminPassword(password);
+    const res = await verifyAdminPassword(password, storeId);
     setLoading(false);
 
     if (res.success) {
