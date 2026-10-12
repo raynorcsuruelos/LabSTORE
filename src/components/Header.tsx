@@ -88,11 +88,11 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="bg-[#003057] text-white px-5 py-3.5 border-b-4 border-black flex flex-wrap items-center justify-between gap-4 select-none">
+    <header className="bg-[#003057] text-white px-3 sm:px-5 py-2.5 sm:py-3.5 border-b-4 border-black flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 select-none">
       {/* Brand Identity */}
-      <div className="flex items-center gap-3.5">
-        <div className="bg-white rounded px-2.5 py-1 flex items-center justify-center border-2 border-black/30 shadow-sm">
-          <svg viewBox="0 0 120 40" fill="none" className="w-14 h-auto" xmlns="http://www.w3.org/2000/svg">
+      <div className="flex items-center gap-2.5 sm:gap-3.5">
+        <div className="bg-white rounded px-2 py-0.5 sm:px-2.5 sm:py-1 flex items-center justify-center border-2 border-black/30 shadow-sm shrink-0">
+          <svg viewBox="0 0 120 40" fill="none" className="w-11 sm:w-14 h-auto" xmlns="http://www.w3.org/2000/svg">
             <rect width="120" height="40" rx="4" fill="#fff" />
             <text x="6" y="29" fontFamily="Arial" fontWeight="900" fontSize="26" fill="#003057">
               slb
@@ -104,13 +104,13 @@ export const Header: React.FC<HeaderProps> = ({
           </svg>
         </div>
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight leading-tight flex items-center gap-2">
+          <h1 className="text-lg sm:text-2xl font-bold tracking-tight leading-tight flex items-center gap-1.5 sm:gap-2">
             WL Lab Inventory
-            <span className="hidden md:inline-block text-[10px] font-mono uppercase bg-[#0066a1] text-white px-2 py-0.5 rounded border border-white/20">
+            <span className="hidden lg:inline-block text-[10px] font-mono uppercase bg-[#0066a1] text-white px-2 py-0.5 rounded border border-white/20">
               Dexie.js Offline + OneDrive Sync
             </span>
           </h1>
-          <p className="text-xs text-blue-200/80 font-normal">
+          <p className="text-[11px] sm:text-xs text-blue-200/80 font-normal">
             Wireline Laboratory · Parts &amp; Stock Manager
           </p>
         </div>

@@ -30,7 +30,7 @@ import { StoreSelectModal } from './components/StoreSelectModal';
 import { BarChart3, ExternalLink } from 'lucide-react';
 
 interface PendingAdminAction {
-  type: 'adjust' | 'withdraw' | 'admin_panel';
+  type: 'adjust' | 'withdraw' | 'add_stock' | 'sub_stock' | 'admin_panel';
   item?: InventoryItem;
 }
 
@@ -236,6 +236,36 @@ function InventoryApp() {
     showToast(`Switched to ${targetStore?.name || 'Store'}`, 'info');
   };
 
+  // Direct +/- Stock Actions (Admin Protected)
+  const handleStockAdd = async (item: InventoryItem) => {
+    if (isAdmin) {
+      const res = await adjustItemStock(currentStore.id, item.partNumber, 'add', 1, 'Quick +1 stock added by admin');
+      if (res.success && res.newItem) {
+        showToast(`Added 1 unit to ${item.partNumber} (${currentStore.name}) - Qty: ${res.newItem.quantity}`, 'success');
+      }
+    } else {
+      setPendingAdminAction({ type: 'add_stock', item });
+      setAdminLoginOpen(true);
+    }
+  };
+
+  const handleStockSub = async (item: InventoryItem) => {
+    if (item.quantity <= 0) {
+      showToast(`Stock for ${item.partNumber} is already zero.`, 'warn');
+      return;
+    }
+
+    if (isAdmin) {
+      const res = await adjustItemStock(currentStore.id, item.partNumber, 'sub', 1, 'Quick -1 stock withdrawn by admin');
+      if (res.success && res.newItem) {
+        showToast(`Withdrawn 1 unit from ${item.partNumber} (${currentStore.name}) - Qty: ${res.newItem.quantity}`, 'info');
+      }
+    } else {
+      setPendingAdminAction({ type: 'sub_stock', item });
+      setAdminLoginOpen(true);
+    }
+  };
+
   // Admin Request Handlers
   const handleRequestAdjust = (item: InventoryItem) => {
     if (isAdmin) {
@@ -270,7 +300,7 @@ function InventoryApp() {
     }
   };
 
-  const handleAdminLoginSuccess = () => {
+  const handleAdminLoginSuccess = async () => {
     setIsAdmin(true);
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
@@ -280,7 +310,21 @@ function InventoryApp() {
       const pending = pendingAdminAction;
       setPendingAdminAction(null);
 
-      if (pending.type === 'adjust' && pending.item) {
+      if (pending.type === 'add_stock' && pending.item) {
+        const res = await adjustItemStock(currentStore.id, pending.item.partNumber, 'add', 1, 'Quick +1 stock added by admin');
+        if (res.success && res.newItem) {
+          showToast(`Added 1 unit to ${pending.item.partNumber} (New Qty: ${res.newItem.quantity})`, 'success');
+        }
+      } else if (pending.type === 'sub_stock' && pending.item) {
+        if (pending.item.quantity <= 0) {
+          showToast(`Stock for ${pending.item.partNumber} is already zero.`, 'warn');
+        } else {
+          const res = await adjustItemStock(currentStore.id, pending.item.partNumber, 'sub', 1, 'Quick -1 stock withdrawn by admin');
+          if (res.success && res.newItem) {
+            showToast(`Withdrawn 1 unit from ${pending.item.partNumber} (New Qty: ${res.newItem.quantity})`, 'info');
+          }
+        }
+      } else if (pending.type === 'adjust' && pending.item) {
         setAdjustingItem(pending.item);
       } else if (pending.type === 'withdraw' && pending.item) {
         if (pending.item.quantity <= 0) {
@@ -534,22 +578,30 @@ function InventoryApp() {
   };
 
   // Context-aware login modal copy
-  const loginActionTitle = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
+  const loginActionTitle = pendingAdminAction?.type === 'add_stock' && pendingAdminAction.item
+    ? `Authorize Adding Stock: ${pendingAdminAction.item.partNumber}`
+    : pendingAdminAction?.type === 'sub_stock' && pendingAdminAction.item
+    ? `Authorize Withdrawing Stock: ${pendingAdminAction.item.partNumber}`
+    : pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
     ? `Adjust Stock: ${pendingAdminAction.item.partNumber}`
     : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
     ? `Withdraw Stock: ${pendingAdminAction.item.partNumber}`
     : `Admin Access: ${currentStore.name}`;
 
-  const loginActionDesc = pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
+  const loginActionDesc = pendingAdminAction?.type === 'add_stock' && pendingAdminAction.item
+    ? `Administrator credentials required to add inventory stock to part ${pendingAdminAction.item.partNumber} in ${currentStore.name}.`
+    : pendingAdminAction?.type === 'sub_stock' && pendingAdminAction.item
+    ? `Administrator credentials required to withdraw inventory stock from part ${pendingAdminAction.item.partNumber} in ${currentStore.name}.`
+    : pendingAdminAction?.type === 'adjust' && pendingAdminAction.item
     ? `Enter administrator password for ${currentStore.name} to modify stock count or safety threshold for part ${pendingAdminAction.item.partNumber}.`
     : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
     ? `Enter administrator password for ${currentStore.name} to withdraw inventory for part ${pendingAdminAction.item.partNumber}.`
     : `Enter the assigned administrator password for ${currentStore.name} (or master administrator password) to manage this sub-store.`;
 
   return (
-    <div className="min-h-screen bg-[#e9edf2] flex flex-col items-center py-0 sm:py-4">
+    <div className="min-h-screen bg-[#e9edf2] flex flex-col items-center p-0 sm:py-3 sm:px-2">
       {/* Main Card Container */}
-      <div className="w-full max-w-[1150px] bg-white border-x-0 sm:border-5 border-black min-h-screen sm:min-h-0 sm:rounded-xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-[1150px] bg-white border-x-0 sm:border-4 border-black min-h-screen sm:min-h-0 sm:rounded-xl shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
         <Header
           lowStockCount={lowStockItems.length}
@@ -595,13 +647,13 @@ function InventoryApp() {
           outOfStockCount={outOfStockItems.length}
         />
 
-        {/* Live Inventory Results Table (Actual Stock Quantity Only) */}
+        {/* Live Inventory Results Table (First 10 rows with pagination, +/- stock signs) */}
         <InventoryTable
           items={filteredItems}
           globalThreshold={globalThreshold}
+          onStockAdd={handleStockAdd}
+          onStockSub={handleStockSub}
           onOpenAdjust={handleRequestAdjust}
-          onQuickWithdraw={handleRequestWithdraw}
-          onOpenEdit={item => setEditingItem(item)}
           isAdmin={isAdmin}
         />
 
