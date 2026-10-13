@@ -126,14 +126,18 @@ function InventoryApp() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   // Security & Admin Session Management
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Admin privileges are bound to the sub-store they were granted for. Master admin
+  // (master password) can additionally manage sub-stores and global settings.
+  const [adminSession, setAdminSession] = useState<{ storeId: string; isMaster: boolean } | null>(null);
+  const isAdmin = adminSession !== null && adminSession.storeId === currentStore.id && adminSession.storeId === currentStoreId;
+  const isMasterAdmin = isAdmin && adminSession.isMaster;
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
   // Inactivity auto-lock timer (15 minutes)
   const handleLockAdmin = useCallback(() => {
     if (isAdmin) {
-      setIsAdmin(false);
+      setAdminSession(null);
       setPendingAdminAction(null);
       setAdjustingItem(null);
       setAdminModalOpen(false);
@@ -223,8 +227,29 @@ function InventoryApp() {
     return result;
   }, [storeItems, searchQuery, activeFilter, globalThreshold]);
 
+  // Revoke every admin privilege (store or master) and close admin UI
+  const revokeAdminSession = useCallback((notify: boolean) => {
+    setAdminSession(null);
+    setPendingAdminAction(null);
+    setAdjustingItem(null);
+    setEditingItem(null);
+    setAdminModalOpen(false);
+    setAdminLoginOpen(false);
+    if (notify) showToast('Admin privileges removed after switching sub-store. Please sign in again.', 'info');
+  }, [showToast]);
+
+  // Safety net: any change of active sub-store (sync, deletion, fallback) ends the admin session
+  useEffect(() => {
+    if (adminSession && (adminSession.storeId !== currentStore.id || adminSession.storeId !== currentStoreId)) {
+      revokeAdminSession(true);
+    }
+  }, [adminSession, currentStore.id, currentStoreId, revokeAdminSession]);
+
   // Store Switching & Selection
   const handleSelectStore = (storeId: string, setAsDefault: boolean) => {
+    if (adminSession && adminSession.storeId !== storeId) {
+      revokeAdminSession(true);
+    }
     setCurrentStoreId(storeId);
     if (setAsDefault) {
       localStorage.setItem('wllab_default_store', storeId);
@@ -299,11 +324,17 @@ function InventoryApp() {
     }
   };
 
-  const handleAdminLoginSuccess = async () => {
-    setIsAdmin(true);
+  const handleAdminLoginSuccess = async (isMaster: boolean) => {
+    if (currentStoreId !== currentStore.id) setCurrentStoreId(currentStore.id);
+    setAdminSession({ storeId: currentStore.id, isMaster });
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
-    showToast(`Admin access granted for ${currentStore?.name || 'Store'}!`, 'success');
+    showToast(
+      isMaster
+        ? `Master admin access granted (active store: ${currentStore?.name || 'Store'}).`
+        : `Store admin access granted for ${currentStore?.name || 'Store'}!`,
+      'success'
+    );
 
     if (pendingAdminAction) {
       const pending = pendingAdminAction;
@@ -433,6 +464,10 @@ function InventoryApp() {
 
   // Sub-Store Management
   const handleCreateStore = async (name: string, code: string, description: string, password: string) => {
+    if (!isMasterAdmin) {
+      showToast('Master administrator password required for sub-store settings.', 'error');
+      return;
+    }
     const slugId = code.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
     const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const hash = await hashPassword(password, salt);
@@ -453,6 +488,10 @@ function InventoryApp() {
   };
 
   const handleDeleteStore = async (storeId: string) => {
+    if (!isMasterAdmin) {
+      showToast('Master administrator password required for sub-store settings.', 'error');
+      return;
+    }
     if (allStores.length <= 1) {
       showToast('Cannot delete the last remaining store.', 'error');
       return;
@@ -469,6 +508,7 @@ function InventoryApp() {
     if (currentStoreId === storeId) {
       const nextStore = allStores.find(s => s.id !== storeId) || allStores[0];
       if (nextStore) {
+        revokeAdminSession(true);
         setCurrentStoreId(nextStore.id);
       }
     }
@@ -544,6 +584,10 @@ function InventoryApp() {
   };
 
   const handleResetSampleData = async () => {
+    if (!isMasterAdmin) {
+      showToast('Master administrator password required for sub-store settings.', 'error');
+      return;
+    }
     if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset across all stores?')) return;
     await db.inventory.clear();
     await db.stores.clear();
@@ -552,6 +596,10 @@ function InventoryApp() {
   };
 
   const handleSaveGlobalThreshold = async (val: number) => {
+    if (!isMasterAdmin) {
+      showToast('Master administrator password required for sub-store settings.', 'error');
+      return;
+    }
     await setSetting('globalThreshold', val);
     showToast(`Global low-stock threshold default set to ${val}.`, 'success');
   };
@@ -745,6 +793,7 @@ function InventoryApp() {
         items={storeItems}
         stores={allStores.length > 0 ? allStores : DEFAULT_STORES}
         currentStoreId={currentStore.id}
+        isMasterAdmin={isMasterAdmin}
         globalThreshold={globalThreshold}
         onApplyAdjust={handleApplyAdjust}
         onWithdraw={handleWithdraw}
@@ -758,7 +807,7 @@ function InventoryApp() {
         onSaveGlobalThreshold={handleSaveGlobalThreshold}
         onCreateStore={handleCreateStore}
         onDeleteStore={handleDeleteStore}
-        onSwitchStore={id => setCurrentStoreId(id)}
+        onSwitchStore={id => handleSelectStore(id, false)}
         showToast={showToast}
       />
 
