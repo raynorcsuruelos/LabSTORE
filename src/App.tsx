@@ -130,7 +130,7 @@ function InventoryApp() {
   // Admin access is bound to the store that was unlocked; only the master password unlocks every store
   const [adminSession, setAdminSession] = useState<{ storeId: string; isSuperAdmin: boolean } | null>(null);
   const isSuperAdmin = !!adminSession?.isSuperAdmin;
-  const isAdmin = !!adminSession && (adminSession.isSuperAdmin || adminSession.storeId === currentStore.id);
+  const isAdmin = !!adminSession && adminSession.storeId === currentStore.id;
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
@@ -168,14 +168,17 @@ function InventoryApp() {
     };
   }, [adminSession, handleLockAdmin]);
 
-  // Leaving the unlocked store ends a store admin session; the next store asks for its own password
+  // Switching to another store always ends the admin session (store or master);
+  // the next store must be unlocked again with its own password
   useEffect(() => {
-    if (adminSession && !adminSession.isSuperAdmin && adminSession.storeId !== currentStore.id) {
+    if (adminSession && adminSession.storeId !== currentStore.id) {
       setAdminSession(null);
+      setPendingAdminAction(null);
       setAdjustingItem(null);
       setAdminModalOpen(false);
+      showToast('Admin access disabled after switching store. Enter the password for this store.', 'info');
     }
-  }, [adminSession, currentStore.id]);
+  }, [adminSession, currentStore.id, showToast]);
 
   // Initialize DB and background sync worker on mount
   useEffect(() => {
