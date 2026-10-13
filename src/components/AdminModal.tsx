@@ -18,7 +18,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { InventoryItem, SubStore } from '../types/inventory';
-import { getSetting, setSetting } from '../db/dexieDb';
+import { getSetting, setSetting, DESCRIPTION_PLACEHOLDERS, DEFAULT_REMARKS_PLACEHOLDER } from '../db/dexieDb';
 import { verifyAdminPassword, setAdminPasswordSecure, setStoreAdminPassword } from '../services/security';
 
 interface AdminModalProps {
@@ -27,6 +27,7 @@ interface AdminModalProps {
   items: InventoryItem[];
   stores: SubStore[];
   currentStoreId: string;
+  isMaster: boolean;
   globalThreshold: number;
   onApplyAdjust: (
     partNumber: string,
@@ -56,6 +57,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   items,
   stores,
   currentStoreId,
+  isMaster,
   globalThreshold,
   onApplyAdjust,
   onWithdraw,
@@ -182,9 +184,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     e.preventDefault();
     setPassError('');
 
-    const verifyRes = await verifyAdminPassword(curPass, currentStoreId);
-    if (!verifyRes.success) {
-      setPassError(verifyRes.message || 'Current password is incorrect.');
+    if (!isMaster) {
+      setPassError('Only the master administrator can change the master password.');
+      return;
+    }
+    const verifyRes = await verifyAdminPassword(curPass);
+    if (!verifyRes.success || !verifyRes.isSuperAdmin) {
+      setPassError(verifyRes.message || 'Current master password is incorrect.');
       return;
     }
     if (!newPass.trim()) {
@@ -232,6 +238,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   };
 
   const handleSaveStoreSpecificPassword = async (storeId: string) => {
+    if (!isMaster) {
+      showToast('Only the master administrator can assign store passwords.', 'error');
+      return;
+    }
     if (targetStoreNewPass.length < 6) {
       showToast('Password must be at least 6 characters.', 'error');
       return;
@@ -356,6 +366,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             ➕ Add New Item
           </button>
+          {isMaster && (
           <button
             onClick={() => setActiveTab('stores')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -366,6 +377,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             🏢 Sub-Stores ({stores.length})
           </button>
+          )}
           <button
             onClick={() => setActiveTab('import')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -376,6 +388,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             📥 Import / Export
           </button>
+          {isMaster && (
           <button
             onClick={() => setActiveTab('settings')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -386,6 +399,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             🔑 Admin Settings
           </button>
+          )}
         </div>
 
         {/* Tab Content */}
@@ -587,7 +601,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   type="text"
                   value={newDesc}
                   onChange={e => setNewDesc(e.target.value)}
-                  placeholder="e.g. Heavy Duty Sinker Bar 1.5-inch"
+                  placeholder={DESCRIPTION_PLACEHOLDERS[currentStoreId] || 'e.g. Part description'}
                   className="w-full p-2 border-2 border-black rounded-lg text-xs"
                   required
                 />
@@ -625,7 +639,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   rows={2}
                   value={newRemarks}
                   onChange={e => setNewRemarks(e.target.value)}
-                  placeholder="Tool strings, serial notes, certifications..."
+                  placeholder={DEFAULT_REMARKS_PLACEHOLDER}
                   className="w-full p-2 border-2 border-black rounded-lg text-xs"
                 />
               </div>
@@ -643,7 +657,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           )}
 
           {/* TAB: SUB-STORES MANAGEMENT */}
-          {activeTab === 'stores' && (
+          {!isMaster && (
+            <div className="mb-4 p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-[11px] text-amber-900 flex items-center gap-2">
+              <Shield className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+              <span>
+                Store admin for <strong>{currentStore?.name}</strong> only. Sub-store settings, store passwords and global
+                settings need the master password.
+              </span>
+            </div>
+          )}
+
+          {isMaster && activeTab === 'stores' && (
             <div className="space-y-6">
               {/* Existing Sub-Stores List */}
               <div>
@@ -686,11 +710,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <button
                               onClick={() => {
                                 onSwitchStore(s.id);
-                                showToast(`Switched active store to ${s.name}`, 'info');
                               }}
                               className="px-3 py-1.5 bg-[#0066a1] hover:bg-[#004e7c] text-white text-xs font-bold rounded-lg border border-black cursor-pointer shadow-xs active:scale-95 flex items-center gap-1"
                             >
-                              <span>Switch to Store</span>
+                              <span title="Switching stores signs you out of admin mode">Switch to Store</span>
                               <ArrowRight className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -868,7 +891,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           )}
 
           {/* TAB: SETTINGS */}
-          {activeTab === 'settings' && (
+          {isMaster && activeTab === 'settings' && (
             <div className="space-y-6">
               {/* Change Password */}
               <form onSubmit={handlePasswordChange} className="space-y-3 max-w-sm">
@@ -974,7 +997,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <span>Reload Default Stores &amp; Wireline Inventory</span>
                 </button>
                 <p className="text-[11px] text-gray-500">
-                  Resets the IndexedDB table with standard Schlumberger Wireline laboratory parts for Sonde Lab, E-Lab, and WHE.
+                  Replaces all stores with the demo parts for Sonde Lab, E-Lab and WHE, for every terminal.
                 </p>
               </div>
             </div>

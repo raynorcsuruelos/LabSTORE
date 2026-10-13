@@ -8,9 +8,10 @@ import {
   adjustItemStock,
   logHistory,
   enqueueSync,
-  DEFAULT_STORES
+  DEFAULT_STORES,
+  DEFAULT_CLOUD_SYNC_CONFIG
 } from './db/dexieDb';
-import { oneDriveSyncService, SyncServiceState } from './services/oneDriveSync';
+import { cloudSyncService, SyncServiceState } from './services/cloudSync';
 import { InventoryItem, SubStore } from './types/inventory';
 import { hashPassword } from './services/security';
 import { ToastProvider, useToast } from './components/Toast';
@@ -27,6 +28,8 @@ import { EditPartModal } from './components/EditPartModal';
 import { SyncStatusModal } from './components/SyncStatusModal';
 import { HelpModal } from './components/HelpModal';
 import { StoreSelectModal } from './components/StoreSelectModal';
+import { AuthGate } from './components/LoginScreen';
+import { logout, type User } from '@netlify/identity';
 import { BarChart3, ExternalLink } from 'lucide-react';
 
 interface PendingAdminAction {
@@ -34,7 +37,7 @@ interface PendingAdminAction {
   item?: InventoryItem;
 }
 
-function InventoryApp() {
+function InventoryApp({ user }: { user: User }) {
   const { showToast } = useToast();
 
   // Dexie Reactive Live Queries (Protected against render crashes)
@@ -97,16 +100,7 @@ function InventoryApp() {
     pendingCount: 0,
     lastSyncTime: null,
     errorMessage: null,
-    config: {
-      enabled: true,
-      mode: 'simulated',
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 60,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins'
-    },
+    config: DEFAULT_CLOUD_SYNC_CONFIG,
     logs: []
   });
 
@@ -126,20 +120,23 @@ function InventoryApp() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   // Security & Admin Session Management
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Admin rights are bound to the store they were granted in; the master role is the only one with sub-store settings
+  const [adminSession, setAdminSession] = useState<{ role: 'master' | 'store'; storeId: string } | null>(null);
+  const isAdmin = !!adminSession && adminSession.storeId === currentStore.id;
+  const isMaster = isAdmin && adminSession?.role === 'master';
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
   // Inactivity auto-lock timer (15 minutes)
   const handleLockAdmin = useCallback(() => {
-    if (isAdmin) {
-      setIsAdmin(false);
+    if (adminSession) {
+      setAdminSession(null);
       setPendingAdminAction(null);
       setAdjustingItem(null);
       setAdminModalOpen(false);
       showToast('Admin session locked for security.', 'info');
     }
-  }, [isAdmin, showToast]);
+  }, [adminSession, showToast]);
 
   useEffect(() => {
     const handleUserActivity = () => {
@@ -166,17 +163,18 @@ function InventoryApp() {
 
   // Initialize DB and background sync worker on mount
   useEffect(() => {
-    initDatabase().catch(err => console.error('Failed to init IndexedDB:', err));
-
-    const unsubscribe = oneDriveSyncService.subscribe(state => {
+    const unsubscribe = cloudSyncService.subscribe(state => {
       setSyncState(state);
     });
 
-    oneDriveSyncService.startBackgroundWorker();
+    // Seed/upgrade the local copy first so the first cloud sync sees the final local state
+    initDatabase()
+      .catch(err => console.error('Failed to init IndexedDB:', err))
+      .finally(() => cloudSyncService.startBackgroundWorker());
 
     return () => {
       unsubscribe();
-      oneDriveSyncService.stopBackgroundWorker();
+      cloudSyncService.stopBackgroundWorker();
     };
   }, []);
 
@@ -224,8 +222,21 @@ function InventoryApp() {
   }, [storeItems, searchQuery, activeFilter, globalThreshold]);
 
   // Store Switching & Selection
-  const handleSelectStore = (storeId: string, setAsDefault: boolean) => {
+  // Every store switch drops all admin privileges (master and store admin alike)
+  const switchStore = (storeId: string) => {
+    if (storeId === currentStoreId) return;
+    const hadAdmin = !!adminSession;
+    setAdminSession(null);
+    setPendingAdminAction(null);
+    setAdjustingItem(null);
+    setEditingItem(null);
+    setAdminModalOpen(false);
     setCurrentStoreId(storeId);
+    if (hadAdmin) showToast('Admin privileges removed after switching store. Sign in again as admin for this store.', 'info');
+  };
+
+  const handleSelectStore = (storeId: string, setAsDefault: boolean) => {
+    switchStore(storeId);
     if (setAsDefault) {
       localStorage.setItem('wllab_default_store', storeId);
     }
@@ -299,11 +310,16 @@ function InventoryApp() {
     }
   };
 
-  const handleAdminLoginSuccess = async () => {
-    setIsAdmin(true);
+  const handleAdminLoginSuccess = async (master: boolean) => {
+    setAdminSession({ role: master ? 'master' : 'store', storeId: currentStore.id });
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
-    showToast(`Admin access granted for ${currentStore?.name || 'Store'}!`, 'success');
+    showToast(
+      master
+        ? `Master admin access granted (${currentStore?.name || 'Store'}).`
+        : `Store admin access granted for ${currentStore?.name || 'Store'} only.`,
+      'success'
+    );
 
     if (pendingAdminAction) {
       const pending = pendingAdminAction;
@@ -432,7 +448,14 @@ function InventoryApp() {
   };
 
   // Sub-Store Management
+  const requireMaster = () => {
+    if (isMaster) return true;
+    showToast('Only the master administrator can change sub-store settings.', 'error');
+    return false;
+  };
+
   const handleCreateStore = async (name: string, code: string, description: string, password: string) => {
+    if (!requireMaster()) return;
     const slugId = code.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
     const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const hash = await hashPassword(password, salt);
@@ -453,6 +476,7 @@ function InventoryApp() {
   };
 
   const handleDeleteStore = async (storeId: string) => {
+    if (!requireMaster()) return;
     if (allStores.length <= 1) {
       showToast('Cannot delete the last remaining store.', 'error');
       return;
@@ -461,6 +485,7 @@ function InventoryApp() {
     if (!window.confirm(`Delete store "${target?.name}" and all its parts? This cannot be undone.`)) return;
 
     await db.stores.delete(storeId);
+    await enqueueSync('STORE_MUTATION', storeId, { action: 'DELETE_STORE' });
     const storeItemIds = allItems.filter(i => i.storeId === storeId).map(i => i.id || `${storeId}:${i.partNumber}`);
     if (storeItemIds.length > 0) {
       await db.inventory.bulkDelete(storeItemIds);
@@ -469,7 +494,7 @@ function InventoryApp() {
     if (currentStoreId === storeId) {
       const nextStore = allStores.find(s => s.id !== storeId) || allStores[0];
       if (nextStore) {
-        setCurrentStoreId(nextStore.id);
+        switchStore(nextStore.id);
       }
     }
     showToast(`Store ${target?.name} deleted.`, 'warn');
@@ -544,14 +569,30 @@ function InventoryApp() {
   };
 
   const handleResetSampleData = async () => {
-    if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset across all stores?')) return;
+    if (!requireMaster()) return;
+    if (!window.confirm('Reset ALL stores to the demo sample dataset? This also replaces the shared cloud data for every terminal.')) return;
+    const clearedAt = new Date().toISOString();
+    const previousStoreIds = allStores.map(s => s.id);
     await db.inventory.clear();
     await db.stores.clear();
     await initDatabase();
+    // Stamp the fresh demo parts as newest so they win over the cleared cloud rows
+    const now = new Date().toISOString();
+    await db.inventory.toCollection().modify({ updatedAt: now });
+    const seededStores = await db.stores.toArray();
+    const storeIds = new Set([...previousStoreIds, ...seededStores.map(s => s.id)]);
+    for (const id of storeIds) {
+      await enqueueSync('DELETE', 'STORE_ALL', { cleared: true, storeId: id }, id);
+      await enqueueSync('STORE_MUTATION', id, { action: 'RESET_STORE' });
+    }
+    for (const s of seededStores) {
+      await enqueueSync('BULK_IMPORT', 'ALL', { reset: true, storeId: s.id, clearedAt }, s.id);
+    }
     showToast('Default Wireline items loaded into Sonde Lab, E-Lab, and WHE!', 'success');
   };
 
   const handleSaveGlobalThreshold = async (val: number) => {
+    if (!requireMaster()) return;
     await setSetting('globalThreshold', val);
     showToast(`Global low-stock threshold default set to ${val}.`, 'success');
   };
@@ -563,12 +604,18 @@ function InventoryApp() {
   };
 
   const handleTriggerSyncNow = async () => {
-    const res = await oneDriveSyncService.triggerSync('manual_button');
+    const res = await cloudSyncService.triggerSync('manual_button');
     if (res.success) {
       showToast(res.message, 'success');
     } else {
       showToast(res.message, 'error');
     }
+  };
+
+  const handleSignOut = async () => {
+    if (syncState.pendingCount > 0 && !window.confirm(`${syncState.pendingCount} change(s) have not reached the cloud yet. Sign out anyway? They will upload after the next sign-in.`)) return;
+    cloudSyncService.stopBackgroundWorker();
+    await logout().catch(() => {});
   };
 
   // Open BlueMM default browser navigation
@@ -611,10 +658,13 @@ function InventoryApp() {
           syncState={syncState}
           onQuickSync={handleTriggerSyncNow}
           isAdmin={isAdmin}
+          isMaster={isMaster}
           onLockAdmin={handleLockAdmin}
           currentStoreName={currentStore.name}
           currentStoreCode={currentStore.code}
           onOpenStoreSelect={() => setStoreSelectOpen(true)}
+          userEmail={user.email}
+          onSignOut={handleSignOut}
         />
 
         {/* Low-Stock Notification Drawer */}
@@ -683,7 +733,7 @@ function InventoryApp() {
             </span>
             <span>·</span>
             <span>
-              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
+              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isMaster ? 'MASTER ADMIN' : isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
             </span>
             <span>·</span>
             <span>Sync: {syncState.status.toUpperCase()}</span>
@@ -745,6 +795,7 @@ function InventoryApp() {
         items={storeItems}
         stores={allStores.length > 0 ? allStores : DEFAULT_STORES}
         currentStoreId={currentStore.id}
+        isMaster={isMaster}
         globalThreshold={globalThreshold}
         onApplyAdjust={handleApplyAdjust}
         onWithdraw={handleWithdraw}
@@ -758,7 +809,7 @@ function InventoryApp() {
         onSaveGlobalThreshold={handleSaveGlobalThreshold}
         onCreateStore={handleCreateStore}
         onDeleteStore={handleDeleteStore}
-        onSwitchStore={id => setCurrentStoreId(id)}
+        onSwitchStore={switchStore}
         showToast={showToast}
       />
 
@@ -784,7 +835,7 @@ function InventoryApp() {
 export default function App() {
   return (
     <ToastProvider>
-      <InventoryApp />
+      <AuthGate>{user => <InventoryApp user={user} />}</AuthGate>
     </ToastProvider>
   );
 }

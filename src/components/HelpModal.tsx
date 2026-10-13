@@ -52,8 +52,8 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             <div className="flex items-start gap-2.5">
               <Cloud className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
               <div>
-                <strong>OneDrive Background Sync:</strong> Changes are placed into a local mutation queue and
-                automatically uploaded in the background to Microsoft OneDrive (<code>WLLabInventory/inventory_sync.json</code>).
+                <strong>Cloud Database Sync:</strong> Changes are placed into a local mutation queue and uploaded
+                within seconds to the shared cloud database (Postgres, JSONB records). Other terminals pick them up automatically.
               </div>
             </div>
 
@@ -62,7 +62,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
               <div>
                 <strong>100% Offline Resilient:</strong> If the rig, lab, or offshore facility loses Internet
                 connection, stock operations continue without interruption. Once reconnected, pending mutations
-                auto-reconcile with OneDrive.
+                auto-reconcile with the cloud database.
               </div>
             </div>
           </div>

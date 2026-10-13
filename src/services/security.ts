@@ -1,4 +1,4 @@
-import { getSetting, setSetting, db } from '../db/dexieDb';
+import { getSetting, setSetting, db, enqueueSync } from '../db/dexieDb';
 
 const DEFAULT_SALT = 'WL_LAB_INVENTORY_SECURITY_SALT_2025';
 const DEFAULT_INITIAL_PASS = 'WLAdmin2025';
@@ -41,23 +41,7 @@ export async function verifyAdminPassword(
     };
   }
 
-  // 1. If storeId is provided, check store-specific assigned admin password first
-  if (storeId) {
-    try {
-      const store = await db.stores.get(storeId);
-      if (store && store.adminPasswordHash) {
-        const computedStoreHash = await hashPassword(inputPassword, store.adminPasswordHash.salt);
-        if (computedStoreHash === store.adminPasswordHash.hash) {
-          failedAttempts = 0;
-          return { success: true, isSuperAdmin: false };
-        }
-      }
-    } catch {
-      // fallback to super admin check
-    }
-  }
-
-  // 2. Check Global / Super Admin password
+  // 1. Master password is checked first: it is the highest privilege and works in every store
   const storedRecord = await getSetting<StoredPasswordRecord | null>('adminPassHash', null);
 
   if (!storedRecord) {
@@ -74,6 +58,22 @@ export async function verifyAdminPassword(
     if (computedHash === storedRecord.hash) {
       failedAttempts = 0;
       return { success: true, isSuperAdmin: true };
+    }
+  }
+
+  // 2. Store admin password: only valid for the store it was assigned to
+  if (storeId) {
+    try {
+      const store = await db.stores.get(storeId);
+      if (store && store.adminPasswordHash) {
+        const computedStoreHash = await hashPassword(inputPassword, store.adminPasswordHash.salt);
+        if (computedStoreHash === store.adminPasswordHash.hash) {
+          failedAttempts = 0;
+          return { success: true, isSuperAdmin: false };
+        }
+      }
+    } catch {
+      // treat as no match
     }
   }
 
@@ -127,6 +127,7 @@ export async function setStoreAdminPassword(storeId: string, newPassword: string
   const store = await db.stores.get(storeId);
   if (store) {
     await db.stores.update(storeId, { adminPasswordHash: record });
+    await enqueueSync('STORE_MUTATION', storeId, { action: 'UPDATE_STORE_PASSWORD' });
   }
 }
 

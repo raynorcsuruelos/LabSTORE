@@ -11,9 +11,11 @@ import {
   ShieldCheck,
   LogOut,
   Building2,
-  ChevronDown
+  ChevronDown,
+  UserCircle2
 } from 'lucide-react';
-import { SyncServiceState } from '../services/oneDriveSync';
+import { SyncServiceState } from '../services/cloudSync';
+import { OilRigLogo } from './OilRigLogo';
 
 interface HeaderProps {
   lowStockCount: number;
@@ -24,10 +26,13 @@ interface HeaderProps {
   syncState: SyncServiceState;
   onQuickSync: () => void;
   isAdmin: boolean;
+  isMaster?: boolean;
   onLockAdmin: () => void;
   currentStoreName: string;
   currentStoreCode: string;
   onOpenStoreSelect: () => void;
+  userEmail?: string;
+  onSignOut: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -39,10 +44,13 @@ export const Header: React.FC<HeaderProps> = ({
   syncState,
   onQuickSync,
   isAdmin,
+  isMaster,
   onLockAdmin,
   currentStoreName,
   currentStoreCode,
-  onOpenStoreSelect
+  onOpenStoreSelect,
+  userEmail,
+  onSignOut
 }) => {
   const getSyncBadge = () => {
     if (!syncState.isOnline) {
@@ -59,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-900/60 text-sky-200 border border-sky-400 text-xs font-medium animate-pulse">
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-300" />
-            <span>Syncing to OneDrive...</span>
+            <span>Syncing...</span>
           </span>
         );
       case 'pending':
@@ -81,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-200 border border-emerald-500/50 text-xs font-medium">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{syncState.config.mode === 'local_folder' ? 'OneDrive: Synced' : 'Sync: Local Demo'}</span>
+            <span>Cloud: Synced</span>
           </span>
         );
     }
@@ -92,22 +100,13 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Brand Identity */}
       <div className="flex items-center gap-2.5 sm:gap-3.5">
         <div className="bg-white rounded px-2 py-0.5 sm:px-2.5 sm:py-1 flex items-center justify-center border-2 border-black/30 shadow-sm shrink-0">
-          <svg viewBox="0 0 120 40" fill="none" className="w-11 sm:w-14 h-auto" xmlns="http://www.w3.org/2000/svg">
-            <rect width="120" height="40" rx="4" fill="#fff" />
-            <text x="6" y="29" fontFamily="Arial" fontWeight="900" fontSize="26" fill="#003057">
-              slb
-            </text>
-            <circle cx="100" cy="20" r="14" fill="#0066a1" />
-            <text x="93.5" y="25" fontFamily="Arial" fontWeight="900" fontSize="14" fill="#fff">
-              ★
-            </text>
-          </svg>
+          <OilRigLogo className="w-8 h-8 sm:w-10 sm:h-10" />
         </div>
         <div>
           <h1 className="text-lg sm:text-2xl font-bold tracking-tight leading-tight flex items-center gap-1.5 sm:gap-2">
             WL Lab Inventory
             <span className="hidden lg:inline-block text-[10px] font-mono uppercase bg-[#0066a1] text-white px-2 py-0.5 rounded border border-white/20">
-              Dexie.js Offline + OneDrive Sync
+              Offline + Cloud Database Sync
             </span>
           </h1>
           <p className="text-[11px] sm:text-xs text-blue-200/80 font-normal">
@@ -132,11 +131,11 @@ export const Header: React.FC<HeaderProps> = ({
           <ChevronDown className="w-3 h-3 text-blue-200" />
         </button>
 
-        {/* OneDrive Sync Pill and Trigger */}
+        {/* Cloud Sync Pill and Trigger */}
         <div className="flex items-center gap-1 bg-black/25 p-1 rounded-lg border border-white/10">
           <button
             onClick={onOpenSync}
-            title="Open OneDrive Background Sync Manager"
+            title="Open Cloud Sync Center"
             className="flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer text-left"
           >
             <Cloud className="w-4 h-4 text-blue-300 ml-1" />
@@ -175,7 +174,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1a7a3c] hover:bg-[#145a2c] text-white text-xs sm:text-sm font-semibold rounded-md border border-black cursor-pointer shadow-sm active:scale-95 transition"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Admin Panel</span>
+              <span>{isMaster ? 'Master Admin' : 'Store Admin'}</span>
             </button>
             <button
               onClick={onLockAdmin}
@@ -202,6 +201,16 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <HelpCircle className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Help</span>
+        </button>
+
+        {/* App Sign Out */}
+        <button
+          onClick={onSignOut}
+          title={userEmail ? `Signed in as ${userEmail}. Click to sign out.` : 'Sign out'}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#7f1d1d] hover:bg-[#991b1b] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
+        >
+          <UserCircle2 className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Sign out</span>
         </button>
       </div>
     </header>
