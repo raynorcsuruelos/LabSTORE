@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </h1>
           <p className="text-[11px] sm:text-xs text-blue-200/80 font-normal">
-            Wireline Laboratory · Parts &amp; Stock Manager
+            Wireline Labs · Parts &amp; Stock Manager
           </p>
         </div>
       </div>
