@@ -127,6 +127,7 @@ function InventoryApp() {
 
   // Security & Admin Session Management
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
@@ -134,6 +135,7 @@ function InventoryApp() {
   const handleLockAdmin = useCallback(() => {
     if (isAdmin) {
       setIsAdmin(false);
+      setIsSuperAdmin(false);
       setPendingAdminAction(null);
       setAdjustingItem(null);
       setAdminModalOpen(false);
@@ -299,11 +301,15 @@ function InventoryApp() {
     }
   };
 
-  const handleAdminLoginSuccess = async () => {
+  const handleAdminLoginSuccess = async (asSuperAdmin: boolean) => {
     setIsAdmin(true);
+    setIsSuperAdmin(asSuperAdmin);
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
-    showToast(`Admin access granted for ${currentStore?.name || 'Store'}!`, 'success');
+    showToast(
+      asSuperAdmin ? 'Master admin access granted!' : `Admin access granted for ${currentStore?.name || 'Store'}!`,
+      'success'
+    );
 
     if (pendingAdminAction) {
       const pending = pendingAdminAction;
@@ -433,6 +439,10 @@ function InventoryApp() {
 
   // Sub-Store Management
   const handleCreateStore = async (name: string, code: string, description: string, password: string) => {
+    if (!isSuperAdmin) {
+      showToast('Only the master administrator can create sub-stores.', 'error');
+      return;
+    }
     const slugId = code.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
     const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const hash = await hashPassword(password, salt);
@@ -453,6 +463,10 @@ function InventoryApp() {
   };
 
   const handleDeleteStore = async (storeId: string) => {
+    if (!isSuperAdmin) {
+      showToast('Only the master administrator can delete sub-stores.', 'error');
+      return;
+    }
     if (allStores.length <= 1) {
       showToast('Cannot delete the last remaining store.', 'error');
       return;
@@ -544,6 +558,10 @@ function InventoryApp() {
   };
 
   const handleResetSampleData = async () => {
+    if (!isSuperAdmin) {
+      showToast('Only the master administrator can reset stores.', 'error');
+      return;
+    }
     if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset across all stores?')) return;
     await db.inventory.clear();
     await db.stores.clear();
@@ -683,7 +701,7 @@ function InventoryApp() {
             </span>
             <span>·</span>
             <span>
-              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
+              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isSuperAdmin ? 'MASTER ADMIN' : isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
             </span>
             <span>·</span>
             <span>Sync: {syncState.status.toUpperCase()}</span>
@@ -759,6 +777,12 @@ function InventoryApp() {
         onCreateStore={handleCreateStore}
         onDeleteStore={handleDeleteStore}
         onSwitchStore={id => setCurrentStoreId(id)}
+        isSuperAdmin={isSuperAdmin}
+        onMasterUnlocked={() => {
+          setIsSuperAdmin(true);
+          lastActivityRef.current = Date.now();
+          showToast('Master admin access granted!', 'success');
+        }}
         showToast={showToast}
       />
 

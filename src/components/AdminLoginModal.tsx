@@ -5,7 +5,7 @@ import { verifyAdminPassword } from '../services/security';
 interface AdminLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLoginSuccess: () => void;
+  onLoginSuccess: (isSuperAdmin: boolean) => void;
   storeId?: string;
   storeName?: string;
   actionTitle?: string;
@@ -54,7 +54,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     if (res.success) {
       setPassword('');
       setErrorMessage('');
-      onLoginSuccess();
+      onLoginSuccess(Boolean(res.isSuperAdmin));
     } else {
       setErrorMessage(res.message || 'Incorrect password.');
       if (res.lockoutSeconds) {
