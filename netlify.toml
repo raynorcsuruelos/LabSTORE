@@ -1,3 +1,0 @@
-[dev]
-  command = "bun run dev"
-  targetPort = 3000

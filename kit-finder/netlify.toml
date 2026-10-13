@@ -1,0 +1,7 @@
+[build]
+  command = "bun install && bun run build"
+  publish = "dist"
+
+[dev]
+  command = "bun run dev"
+  targetPort = 3000
