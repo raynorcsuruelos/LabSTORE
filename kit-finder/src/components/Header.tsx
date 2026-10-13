@@ -104,13 +104,13 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div>
           <h1 className="text-lg sm:text-2xl font-bold tracking-tight leading-tight flex items-center gap-1.5 sm:gap-2">
-            WL Kit Finder
+            WL Lab Inventory
             <span className="hidden lg:inline-block text-[10px] font-mono uppercase bg-[#0066a1] text-white px-2 py-0.5 rounded border border-white/20">
               Offline + Cloud Database Sync
             </span>
           </h1>
           <p className="text-[11px] sm:text-xs text-blue-200/80 font-normal">
-            Wireline Labs · Kit &amp; Parts Finder
+            Wireline Labs · Parts &amp; Stock Manager
           </p>
         </div>
       </div>
