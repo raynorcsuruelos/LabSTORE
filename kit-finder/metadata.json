@@ -1,6 +1,6 @@
 {
-  "name": "WL Lab Inventory",
-  "description": "Wireline Labs Parts & Stock Manager with high-performance IndexedDB local storage and automated Microsoft OneDrive background synchronization.",
+  "name": "WL Kit Finder",
+  "description": "Wireline Labs Kit & Parts Finder with offline IndexedDB storage and a shared cloud database.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

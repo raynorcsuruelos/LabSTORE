@@ -13,7 +13,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white border-4 border-black rounded-xl max-w-lg w-full shadow-2xl overflow-hidden flex flex-col animate-pop-in">
         <div className="bg-[#003057] text-white px-5 py-3.5 flex items-center justify-between border-b-3 border-black">
-          <h3 className="font-bold text-base sm:text-lg">Wireline Lab Help &amp; Support</h3>
+          <h3 className="font-bold text-base sm:text-lg">WL Kit Finder Help &amp; Support</h3>
           <button onClick={onClose} className="p-1 hover:bg-white/20 rounded cursor-pointer transition">
             <X className="w-5 h-5" />
           </button>
@@ -32,7 +32,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             >
               rsuruelos@slb.com
             </a>
-            <div className="text-gray-500 text-xs">WL Lab Inventory · Wireline Lab · SLB</div>
+            <div className="text-gray-500 text-xs">WL Kit Finder · Wireline Labs · SLB</div>
           </div>
 
           {/* Architecture info */}
