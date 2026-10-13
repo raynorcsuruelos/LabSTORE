@@ -27,6 +27,7 @@ interface AdminModalProps {
   items: InventoryItem[];
   stores: SubStore[];
   currentStoreId: string;
+  isMasterAdmin: boolean;
   globalThreshold: number;
   onApplyAdjust: (
     partNumber: string,
@@ -56,6 +57,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   items,
   stores,
   currentStoreId,
+  isMasterAdmin,
   globalThreshold,
   onApplyAdjust,
   onWithdraw,
@@ -182,8 +184,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     e.preventDefault();
     setPassError('');
 
-    const verifyRes = await verifyAdminPassword(curPass, currentStoreId);
-    if (!verifyRes.success) {
+    if (!isMasterAdmin) {
+      setPassError('Master administrator access required.');
+      return;
+    }
+    const verifyRes = await verifyAdminPassword(curPass);
+    if (!verifyRes.success || !verifyRes.isSuperAdmin) {
       setPassError(verifyRes.message || 'Current password is incorrect.');
       return;
     }
@@ -232,6 +238,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   };
 
   const handleSaveStoreSpecificPassword = async (storeId: string) => {
+    if (!isMasterAdmin) {
+      showToast('Master administrator password required for sub-store settings.', 'error');
+      return;
+    }
     if (targetStoreNewPass.length < 6) {
       showToast('Password must be at least 6 characters.', 'error');
       return;
@@ -316,6 +326,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <h3 className="font-bold text-base sm:text-lg leading-tight">Wireline Admin Panel</h3>
               <p className="text-[11px] text-blue-200">
                 Managing Sub-Store: <strong className="text-white">{currentStore?.name || 'Store'}</strong> ({currentStore?.code})
+                {' · '}
+                <span className={isMasterAdmin ? 'text-amber-300 font-bold' : 'text-emerald-300 font-bold'}>
+                  {isMasterAdmin ? 'Master Admin' : 'Store Admin'}
+                </span>
               </p>
             </div>
           </div>
@@ -356,6 +370,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             ➕ Add New Item
           </button>
+          {isMasterAdmin && (
           <button
             onClick={() => setActiveTab('stores')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -366,6 +381,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             🏢 Sub-Stores ({stores.length})
           </button>
+          )}
           <button
             onClick={() => setActiveTab('import')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -376,6 +392,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             📥 Import / Export
           </button>
+          {isMasterAdmin && (
           <button
             onClick={() => setActiveTab('settings')}
             className={`px-3 py-2 text-xs font-bold rounded-t-md transition border-t-2 border-x-2 -mb-[2px] whitespace-nowrap cursor-pointer ${
@@ -386,10 +403,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             🔑 Admin Settings
           </button>
+          )}
         </div>
 
         {/* Tab Content */}
         <div className="p-5 overflow-y-auto flex-1 text-xs sm:text-sm">
+          {!isMasterAdmin && (
+            <div className="mb-4 p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-[11px] text-amber-900 flex items-start gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+              <span>
+                Signed in as store admin for <strong>{currentStore?.name}</strong>. You can only manage this sub-store.
+                Sub-store and admin settings require the master administrator password.
+              </span>
+            </div>
+          )}
           {/* TAB: ADJUST */}
           {activeTab === 'adjust' && (
             <form onSubmit={handleAdjustSubmit} className="space-y-4">
@@ -643,7 +670,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           )}
 
           {/* TAB: SUB-STORES MANAGEMENT */}
-          {activeTab === 'stores' && (
+          {activeTab === 'stores' && isMasterAdmin && (
             <div className="space-y-6">
               {/* Existing Sub-Stores List */}
               <div>
@@ -686,11 +713,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <button
                               onClick={() => {
                                 onSwitchStore(s.id);
-                                showToast(`Switched active store to ${s.name}`, 'info');
                               }}
                               className="px-3 py-1.5 bg-[#0066a1] hover:bg-[#004e7c] text-white text-xs font-bold rounded-lg border border-black cursor-pointer shadow-xs active:scale-95 flex items-center gap-1"
                             >
-                              <span>Switch to Store</span>
+                              <span>Switch to Store (Ends Admin Session)</span>
                               <ArrowRight className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -868,7 +894,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           )}
 
           {/* TAB: SETTINGS */}
-          {activeTab === 'settings' && (
+          {activeTab === 'settings' && isMasterAdmin && (
             <div className="space-y-6">
               {/* Change Password */}
               <form onSubmit={handlePasswordChange} className="space-y-3 max-w-sm">
