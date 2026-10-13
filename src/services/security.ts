@@ -41,23 +41,7 @@ export async function verifyAdminPassword(
     };
   }
 
-  // 1. If storeId is provided, check store-specific assigned admin password first
-  if (storeId) {
-    try {
-      const store = await db.stores.get(storeId);
-      if (store && store.adminPasswordHash) {
-        const computedStoreHash = await hashPassword(inputPassword, store.adminPasswordHash.salt);
-        if (computedStoreHash === store.adminPasswordHash.hash) {
-          failedAttempts = 0;
-          return { success: true, isSuperAdmin: false };
-        }
-      }
-    } catch {
-      // fallback to super admin check
-    }
-  }
-
-  // 2. Check Global / Super Admin password
+  // 1. Check Global / Super Admin (master) password first so it always grants master access
   const storedRecord = await getSetting<StoredPasswordRecord | null>('adminPassHash', null);
 
   if (!storedRecord) {
@@ -74,6 +58,22 @@ export async function verifyAdminPassword(
     if (computedHash === storedRecord.hash) {
       failedAttempts = 0;
       return { success: true, isSuperAdmin: true };
+    }
+  }
+
+  // 2. If storeId is provided, check store-specific assigned admin password
+  if (storeId) {
+    try {
+      const store = await db.stores.get(storeId);
+      if (store && store.adminPasswordHash) {
+        const computedStoreHash = await hashPassword(inputPassword, store.adminPasswordHash.salt);
+        if (computedStoreHash === store.adminPasswordHash.hash) {
+          failedAttempts = 0;
+          return { success: true, isSuperAdmin: false };
+        }
+      }
+    } catch {
+      // treat as failed attempt
     }
   }
 
