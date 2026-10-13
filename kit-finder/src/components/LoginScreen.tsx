@@ -42,7 +42,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [checking, setChecking] = useState(true);
   const [view, setView] = useState<View>('login');
   const [inviteToken, setInviteToken] = useState<string | null>(null);
-  const [signupAllowed, setSignupAllowed] = useState(false);
+  const [signupAllowed, setSignupAllowed] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -160,8 +160,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             <OilRigLogo className="w-10 h-10" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight leading-tight">WL Lab Inventory</h1>
-            <p className="text-xs text-blue-200/80">Wireline Laboratory · Parts &amp; Stock Manager</p>
+            <h1 className="text-xl font-bold tracking-tight leading-tight">WL Kit Finder</h1>
+            <p className="text-xs text-blue-200/80">Wireline Labs · Kit &amp; Parts Finder</p>
           </div>
         </div>
 
