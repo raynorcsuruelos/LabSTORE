@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { InventoryItem, HistoryEntry, SyncQueueItem, OneDriveConfig, SubStore } from '../types/inventory';
+import { InventoryItem, HistoryEntry, SyncQueueItem, CloudSyncConfig, SubStore } from '../types/inventory';
 import { initializeSecurity, hashPassword } from '../services/security';
 
 export class WLLabDatabase extends Dexie {
@@ -47,40 +47,68 @@ export const DEFAULT_STORES: SubStore[] = [
   }
 ];
 
+const DEMO_REMARKS = 'DemoParts only/raynor';
+const DEMO_SEED_VERSION = 2;
+// Part IDs of the earlier demo data set, removed when upgrading to DEMO_SEED_VERSION 2
+const LEGACY_DEMO_ITEM_IDS = [
+  'sonde-lab:WL-1003', 'sonde-lab:WL-1005', 'sonde-lab:WL-1007', 'sonde-lab:SL-3001', 'sonde-lab:SL-3002',
+  'e-lab:EL-2001', 'e-lab:EL-2002', 'e-lab:EL-2003', 'e-lab:EL-2004', 'e-lab:EL-2005',
+  'whe:WL-1001', 'whe:WL-1002', 'whe:WL-1004', 'whe:WL-1006', 'whe:WL-1008'
+];
+
+function demoItem(storeId: string, partNumber: string, description: string, location: string, quantity: number, threshold: number): InventoryItem {
+  return {
+    id: `${storeId}:${partNumber}`,
+    storeId,
+    partNumber,
+    description,
+    location,
+    quantity,
+    threshold,
+    remarks: DEMO_REMARKS,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 export const INITIAL_ITEMS_PER_STORE: Record<string, InventoryItem[]> = {
   'sonde-lab': [
-    { id: 'sonde-lab:WL-1003', storeId: 'sonde-lab', partNumber: 'WL-1003', description: 'Pressure Transducer 10kpsi', location: 'Shelf C-2', quantity: 0, threshold: 0, remarks: 'Critical – reorder immediately', updatedAt: new Date().toISOString() },
-    { id: 'sonde-lab:WL-1005', storeId: 'sonde-lab', partNumber: 'WL-1005', description: 'Cable Head Assembly', location: 'Shelf A-2', quantity: 2, threshold: 4, remarks: 'Inspect before use', updatedAt: new Date().toISOString() },
-    { id: 'sonde-lab:WL-1007', storeId: 'sonde-lab', partNumber: 'WL-1007', description: 'CCL Sensor Module', location: 'Cabinet F', quantity: 1, threshold: 3, remarks: 'Pre-calibrated', updatedAt: new Date().toISOString() },
-    { id: 'sonde-lab:SL-3001', storeId: 'sonde-lab', partNumber: 'SL-3001', description: 'Acoustic Sonde Mandrel 3-3/8"', location: 'Rack S-1', quantity: 4, threshold: 2, remarks: 'High-temp 400F rated', updatedAt: new Date().toISOString() },
-    { id: 'sonde-lab:SL-3002', storeId: 'sonde-lab', partNumber: 'SL-3002', description: 'Dual Induction Coil Assembly', location: 'Cabinet S-3', quantity: 6, threshold: 3, remarks: 'Calibrated 20k ohm-m', updatedAt: new Date().toISOString() },
+    demoItem('sonde-lab', 'OR-2-012', 'O-Ring', 'Shelf C-2', 0, 0),
+    demoItem('sonde-lab', 'OR-2-118', 'O-Ring', 'Shelf A-2', 2, 4),
+    demoItem('sonde-lab', 'OR-2-226', 'O-Ring', 'Cabinet F', 1, 3),
+    demoItem('sonde-lab', 'OR-2-334', 'O-Ring', 'Rack S-1', 4, 2),
+    demoItem('sonde-lab', 'OR-2-347', 'O-Ring', 'Cabinet S-3', 6, 3),
   ],
   'e-lab': [
-    { id: 'e-lab:EL-2001', storeId: 'e-lab', partNumber: 'EL-2001', description: 'Telemetry Digital Cartridge', location: 'ESD Bin 12', quantity: 3, threshold: 2, remarks: 'Firmware v4.8 loaded', updatedAt: new Date().toISOString() },
-    { id: 'e-lab:EL-2002', storeId: 'e-lab', partNumber: 'EL-2002', description: 'High-Temp Capacitor Pack 200C', location: 'Shelf E-4', quantity: 25, threshold: 10, remarks: 'Mil-spec high temp', updatedAt: new Date().toISOString() },
-    { id: 'e-lab:EL-2003', storeId: 'e-lab', partNumber: 'EL-2003', description: 'Power Distribution Board (PDB)', location: 'ESD Drawer 3', quantity: 5, threshold: 3, remarks: 'For 5700 tool series', updatedAt: new Date().toISOString() },
-    { id: 'e-lab:EL-2004', storeId: 'e-lab', partNumber: 'EL-2004', description: 'Gamma Ray Scintillation PMT', location: 'Cabinet E-2', quantity: 2, threshold: 2, remarks: 'Store in padded shock box', updatedAt: new Date().toISOString() },
-    { id: 'e-lab:EL-2005', storeId: 'e-lab', partNumber: 'EL-2005', description: 'Ceramic Resistor Array 10k', location: 'Bin E-8', quantity: 40, threshold: 15, remarks: 'Precision 0.1%', updatedAt: new Date().toISOString() },
+    demoItem('e-lab', 'EL-2001', 'Resistor 10k Ohm 1/4W', 'ESD Bin 12', 3, 2),
+    demoItem('e-lab', 'EL-2002', 'Ceramic Capacitor 100nF', 'Shelf E-4', 25, 10),
+    demoItem('e-lab', 'EL-2003', 'Diode 1N4007', 'ESD Drawer 3', 5, 3),
+    demoItem('e-lab', 'EL-2004', 'LED 5mm Red', 'Cabinet E-2', 2, 2),
+    demoItem('e-lab', 'EL-2005', 'NPN Transistor 2N2222', 'Bin E-8', 40, 15),
   ],
   'whe': [
-    { id: 'whe:WL-1001', storeId: 'whe', partNumber: 'WL-1001', description: 'O-Ring Kit 2" Standard', location: 'Shelf A-1', quantity: 12, threshold: 0, remarks: 'For 5110 tool head', updatedAt: new Date().toISOString() },
-    { id: 'whe:WL-1002', storeId: 'whe', partNumber: 'WL-1002', description: 'Centralizer Spring Pack', location: 'Bin B-3', quantity: 3, threshold: 5, remarks: 'Check expiry date', updatedAt: new Date().toISOString() },
-    { id: 'whe:WL-1004', storeId: 'whe', partNumber: 'WL-1004', description: 'Fishing Tool Overshot 3.5"', location: 'Rack D-7', quantity: 7, threshold: 3, remarks: '', updatedAt: new Date().toISOString() },
-    { id: 'whe:WL-1006', storeId: 'whe', partNumber: 'WL-1006', description: 'Torque Anchor Set', location: 'Bin E-1', quantity: 15, threshold: 0, remarks: '', updatedAt: new Date().toISOString() },
-    { id: 'whe:WL-1008', storeId: 'whe', partNumber: 'WL-1008', description: 'Hydraulic Seal Kit', location: 'Shelf A-4', quantity: 8, threshold: 0, remarks: '', updatedAt: new Date().toISOString() },
+    demoItem('whe', 'PG-1001', 'Pressure Gauge 0-100 psi', 'Shelf A-1', 12, 0),
+    demoItem('whe', 'PG-1002', 'Pressure Gauge 0-1,000 psi', 'Bin B-3', 3, 5),
+    demoItem('whe', 'PG-1004', 'Pressure Gauge 0-5,000 psi', 'Rack D-7', 7, 3),
+    demoItem('whe', 'PG-1006', 'Pressure Gauge 0-10,000 psi', 'Bin E-1', 15, 0),
+    demoItem('whe', 'PG-1008', 'Pressure Gauge 0-15,000 psi', 'Shelf A-4', 8, 0),
   ]
 };
 
-export const DEFAULT_ONEDRIVE_CONFIG: OneDriveConfig = {
+// Placeholder text for the "Description" field when adding a part, per sub-store
+export const DESCRIPTION_PLACEHOLDERS: Record<string, string> = {
+  'sonde-lab': 'e.g. O-Ring',
+  'e-lab': 'e.g. Resistor 10k Ohm, Capacitor 100nF, Diode 1N4007',
+  'whe': 'e.g. Pressure Gauge 0-5,000 psi'
+};
+export const DEFAULT_REMARKS_PLACEHOLDER = DEMO_REMARKS;
+
+export const DEFAULT_CLOUD_SYNC_CONFIG: CloudSyncConfig = {
   enabled: true,
-  mode: 'simulated',
-  folderPath: 'WLLabInventory',
-  fileName: 'inventory_sync.json',
-  autoSyncIntervalSeconds: 60,
+  autoSyncIntervalSeconds: 10,
   lastSyncTime: null,
   lastSyncStatus: 'synced',
   conflictResolution: 'last_write_wins',
-  remoteLastModified: null
+  cursor: null
 };
 
 // Seed database on first launch
@@ -126,20 +154,31 @@ export async function initDatabase() {
     await logHistory('Database Initialized', 'SYSTEM', 'Seeded initial multi-store inventory in IndexedDB', allInitialItems.length, 'Sonde Lab, E-Lab, and WHE stores loaded');
   }
 
+  // 3. Replace the previous demo parts with the current demo set (one-time, keeps any real parts)
+  const seedVersion = await getSetting<number>('demoSeedVersion', 1);
+  if (seedVersion < DEMO_SEED_VERSION) {
+    if (itemCount > 0) {
+      await db.inventory.bulkDelete(LEGACY_DEMO_ITEM_IDS);
+      const currentIds = new Set((await db.inventory.toCollection().primaryKeys()) as string[]);
+      const demoItems = Object.values(INITIAL_ITEMS_PER_STORE).flat().filter(i => !currentIds.has(i.id!));
+      await db.inventory.bulkPut(demoItems);
+    }
+    await setSetting('demoSeedVersion', DEMO_SEED_VERSION);
+  }
+
   // Ensure default global threshold and sync config
   const gthresh = await getSetting('globalThreshold', null);
   if (gthresh === null) {
     await setSetting('globalThreshold', 0);
   }
 
-  const odConfig = await getSetting<any>('oneDriveConfig', null);
-  if (!odConfig) {
-    await setSetting('oneDriveConfig', DEFAULT_ONEDRIVE_CONFIG);
-  } else if (odConfig.mode !== 'simulated' && odConfig.mode !== 'local_folder') {
-    // Migrate configs saved by the removed Microsoft sign-in / Graph token modes
-    const { accessToken, msalClientId, msalTenantId, userDisplayName, userEmail, isAuthenticated, ...rest } = odConfig;
-    await setSetting('oneDriveConfig', { ...rest, mode: 'simulated' });
+  const syncConfig = await getSetting<CloudSyncConfig | null>('cloudSyncConfig', null);
+  if (!syncConfig) {
+    await setSetting('cloudSyncConfig', DEFAULT_CLOUD_SYNC_CONFIG);
   }
+  // OneDrive sync was replaced by the cloud database; drop its leftovers
+  await db.settings.delete('oneDriveConfig');
+  await db.settings.delete('oneDriveFolderHandle');
 }
 
 export async function getSetting<T = any>(key: string, defaultValue: T): Promise<T> {
@@ -258,7 +297,7 @@ export async function adjustItemStock(
       storeId
     );
 
-    // Queue for OneDrive sync
+    // Queue for cloud sync
     await enqueueSync(
       'ADJUST',
       partNumber,

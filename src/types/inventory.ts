@@ -50,24 +50,26 @@ export interface SyncQueueItem {
 
 export type SyncState = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
 
-export interface OneDriveConfig {
+export interface CloudSyncConfig {
   enabled: boolean;
-  mode: 'simulated' | 'local_folder'; // local_folder = OneDrive folder synced by the OneDrive desktop app
-  linkedFolderName?: string; // display name of the linked OneDrive folder
-  folderPath: string; // e.g. "WLLabInventory"
-  fileName: string;   // e.g. "inventory_sync.json"
-  autoSyncIntervalSeconds: number; // e.g. 15, 30, 60
+  autoSyncIntervalSeconds: number; // how often to pull changes from other terminals, e.g. 10
   lastSyncTime: string | null;
   lastSyncStatus: SyncState;
   conflictResolution: 'last_write_wins' | 'local_priority' | 'remote_priority';
-  remoteLastModified?: string | null;
+  cursor: string | null; // server change-feed position; null = this terminal has never synced
 }
 
-export interface OneDriveCloudSnapshot {
-  lastUpdated: string;
-  source: string;
-  stores?: SubStore[];
-  itemCount: number;
-  items: InventoryItem[];
-  historyCount: number;
+export interface CloudRecord<T> {
+  id: string;
+  storeId?: string;
+  data: T;
+  deleted: boolean;
+  clientUpdatedAt?: string;
+}
+
+export interface CloudChanges {
+  serverTime: string;
+  full: boolean;
+  stores: CloudRecord<SubStore>[];
+  items: CloudRecord<InventoryItem>[];
 }
