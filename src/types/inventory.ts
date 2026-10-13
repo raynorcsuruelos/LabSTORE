@@ -52,8 +52,13 @@ export type SyncState = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
 
 export interface OneDriveConfig {
   enabled: boolean;
-  mode: 'simulated' | 'graph_token';
+  mode: 'simulated' | 'msal_popup' | 'graph_token';
   accessToken?: string;
+  msalClientId?: string;
+  msalTenantId?: string; // 'common' or corporate tenant ID
+  userDisplayName?: string;
+  userEmail?: string;
+  isAuthenticated?: boolean;
   folderPath: string; // e.g. "WLLabInventory"
   fileName: string;   // e.g. "inventory_sync.json"
   autoSyncIntervalSeconds: number; // e.g. 15, 30, 60

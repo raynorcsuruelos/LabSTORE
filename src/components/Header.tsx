@@ -47,9 +47,9 @@ export const Header: React.FC<HeaderProps> = ({
   const getSyncBadge = () => {
     if (!syncState.isOnline) {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-900/60 text-amber-200 border border-amber-500/50 text-xs font-semibold">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 border border-amber-500/50 text-xs font-medium">
           <WifiOff className="w-3.5 h-3.5" />
-          <span>Offline (IndexedDB Active)</span>
+          <span>Offline (IndexedDB)</span>
         </span>
       );
     }
@@ -57,21 +57,21 @@ export const Header: React.FC<HeaderProps> = ({
     switch (syncState.status) {
       case 'syncing':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-900/60 text-blue-200 border border-blue-400 text-xs font-semibold animate-pulse">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-300" />
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-900/60 text-sky-200 border border-sky-400 text-xs font-medium animate-pulse">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-300" />
             <span>Syncing to OneDrive...</span>
           </span>
         );
       case 'pending':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-900/60 text-amber-200 border border-amber-400 text-xs font-semibold">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 border border-amber-400 text-xs font-medium">
             <RefreshCw className="w-3.5 h-3.5 text-amber-300" />
-            <span>{syncState.pendingCount} Pending Sync</span>
+            <span>{syncState.pendingCount} Pending</span>
           </span>
         );
       case 'error':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-red-900/60 text-red-200 border border-red-400 text-xs font-semibold">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-900/60 text-red-200 border border-red-400 text-xs font-medium">
             <AlertTriangle className="w-3.5 h-3.5 text-red-300" />
             <span>Sync Error</span>
           </span>
@@ -79,9 +79,9 @@ export const Header: React.FC<HeaderProps> = ({
       case 'synced':
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/70 text-emerald-200 border border-emerald-500/50 text-xs font-semibold">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-200 border border-emerald-500/50 text-xs font-medium">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>OneDrive: Synced</span>
+            <span>{syncState.config.isAuthenticated ? 'OneDrive: Synced' : 'OneDrive Sync: Ready'}</span>
           </span>
         );
     }

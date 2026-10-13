@@ -99,7 +99,7 @@ function InventoryApp() {
     errorMessage: null,
     config: {
       enabled: true,
-      mode: 'simulated',
+      mode: 'msal_popup',
       accessToken: '',
       folderPath: 'WLLabInventory',
       fileName: 'inventory_sync.json',
