@@ -129,7 +129,7 @@ function InventoryApp() {
   // Admin privileges are bound to the sub-store they were granted for. Master admin
   // (master password) can additionally manage sub-stores and global settings.
   const [adminSession, setAdminSession] = useState<{ storeId: string; isMaster: boolean } | null>(null);
-  const isAdmin = adminSession !== null && adminSession.storeId === currentStore.id;
+  const isAdmin = adminSession !== null && adminSession.storeId === currentStore.id && adminSession.storeId === currentStoreId;
   const isMasterAdmin = isAdmin && adminSession.isMaster;
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
@@ -227,21 +227,29 @@ function InventoryApp() {
     return result;
   }, [storeItems, searchQuery, activeFilter, globalThreshold]);
 
-  // Switching to a different sub-store revokes all admin privileges automatically
+  // Revoke every admin privilege (store or master) and close admin UI
+  const revokeAdminSession = useCallback((notify: boolean) => {
+    setAdminSession(null);
+    setPendingAdminAction(null);
+    setAdjustingItem(null);
+    setEditingItem(null);
+    setAdminModalOpen(false);
+    setAdminLoginOpen(false);
+    if (notify) showToast('Admin privileges removed after switching sub-store. Please sign in again.', 'info');
+  }, [showToast]);
+
+  // Safety net: any change of active sub-store (sync, deletion, fallback) ends the admin session
   useEffect(() => {
-    if (adminSession && adminSession.storeId !== currentStore.id) {
-      setAdminSession(null);
-      setPendingAdminAction(null);
-      setAdjustingItem(null);
-      setEditingItem(null);
-      setAdminModalOpen(false);
-      setAdminLoginOpen(false);
-      showToast('Admin privileges removed after switching sub-store.', 'info');
+    if (adminSession && (adminSession.storeId !== currentStore.id || adminSession.storeId !== currentStoreId)) {
+      revokeAdminSession(true);
     }
-  }, [adminSession, currentStore.id, showToast]);
+  }, [adminSession, currentStore.id, currentStoreId, revokeAdminSession]);
 
   // Store Switching & Selection
   const handleSelectStore = (storeId: string, setAsDefault: boolean) => {
+    if (adminSession && adminSession.storeId !== storeId) {
+      revokeAdminSession(true);
+    }
     setCurrentStoreId(storeId);
     if (setAsDefault) {
       localStorage.setItem('wllab_default_store', storeId);
@@ -317,6 +325,7 @@ function InventoryApp() {
   };
 
   const handleAdminLoginSuccess = async (isMaster: boolean) => {
+    if (currentStoreId !== currentStore.id) setCurrentStoreId(currentStore.id);
     setAdminSession({ storeId: currentStore.id, isMaster });
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
@@ -499,6 +508,7 @@ function InventoryApp() {
     if (currentStoreId === storeId) {
       const nextStore = allStores.find(s => s.id !== storeId) || allStores[0];
       if (nextStore) {
+        revokeAdminSession(true);
         setCurrentStoreId(nextStore.id);
       }
     }

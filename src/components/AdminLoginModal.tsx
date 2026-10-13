@@ -95,7 +95,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   setPassword(e.target.value);
                   setErrorMessage('');
                 }}
-                placeholder="Password (Default: WLAdmin2025)"
+                placeholder={storeName ? `Password for ${storeName} or master password` : 'Administrator password'}
                 className="w-full pl-3 pr-10 py-2.5 border-2 border-black rounded-lg text-sm font-medium focus:outline-none focus:border-[#0066a1]"
                 autoFocus
                 required
