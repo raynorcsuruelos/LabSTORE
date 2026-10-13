@@ -74,10 +74,9 @@ export const INITIAL_ITEMS_PER_STORE: Record<string, InventoryItem[]> = {
 export const DEFAULT_ONEDRIVE_CONFIG: OneDriveConfig = {
   enabled: true,
   mode: 'simulated',
-  accessToken: '',
   folderPath: 'WLLabInventory',
   fileName: 'inventory_sync.json',
-  autoSyncIntervalSeconds: 30,
+  autoSyncIntervalSeconds: 60,
   lastSyncTime: null,
   lastSyncStatus: 'synced',
   conflictResolution: 'last_write_wins',
@@ -133,9 +132,13 @@ export async function initDatabase() {
     await setSetting('globalThreshold', 0);
   }
 
-  const odConfig = await getSetting('oneDriveConfig', null);
+  const odConfig = await getSetting<any>('oneDriveConfig', null);
   if (!odConfig) {
     await setSetting('oneDriveConfig', DEFAULT_ONEDRIVE_CONFIG);
+  } else if (odConfig.mode !== 'simulated' && odConfig.mode !== 'local_folder') {
+    // Migrate configs saved by the removed Microsoft sign-in / Graph token modes
+    const { accessToken, msalClientId, msalTenantId, userDisplayName, userEmail, isAuthenticated, ...rest } = odConfig;
+    await setSetting('oneDriveConfig', { ...rest, mode: 'simulated' });
   }
 }
 

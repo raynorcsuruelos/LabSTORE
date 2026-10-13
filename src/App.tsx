@@ -99,11 +99,10 @@ function InventoryApp() {
     errorMessage: null,
     config: {
       enabled: true,
-      mode: 'msal_popup',
-      accessToken: '',
+      mode: 'simulated',
       folderPath: 'WLLabInventory',
       fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
+      autoSyncIntervalSeconds: 60,
       lastSyncTime: null,
       lastSyncStatus: 'synced',
       conflictResolution: 'last_write_wins'

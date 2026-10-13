@@ -52,13 +52,8 @@ export type SyncState = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
 
 export interface OneDriveConfig {
   enabled: boolean;
-  mode: 'simulated' | 'msal_popup' | 'graph_token';
-  accessToken?: string;
-  msalClientId?: string;
-  msalTenantId?: string; // 'common' or corporate tenant ID
-  userDisplayName?: string;
-  userEmail?: string;
-  isAuthenticated?: boolean;
+  mode: 'simulated' | 'local_folder'; // local_folder = OneDrive folder synced by the OneDrive desktop app
+  linkedFolderName?: string; // display name of the linked OneDrive folder
   folderPath: string; // e.g. "WLLabInventory"
   fileName: string;   // e.g. "inventory_sync.json"
   autoSyncIntervalSeconds: number; // e.g. 15, 30, 60
