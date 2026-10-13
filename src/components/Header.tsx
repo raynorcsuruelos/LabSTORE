@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-200 border border-emerald-500/50 text-xs font-medium">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{syncState.config.isAuthenticated ? 'OneDrive: Synced' : 'OneDrive Sync: Ready'}</span>
+            <span>{syncState.config.mode === 'local_folder' ? 'OneDrive: Synced' : 'Sync: Local Demo'}</span>
           </span>
         );
     }

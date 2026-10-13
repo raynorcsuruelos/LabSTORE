@@ -10,18 +10,20 @@ import {
   Settings,
   ListTree,
   FileCode,
-  Key,
   FolderSync,
-  HelpCircle,
-  LogIn,
-  LogOut,
-  UserCheck,
-  Building2,
-  ExternalLink
+  FolderOpen,
+  Unlink,
+  Download
 } from 'lucide-react';
 import { SyncServiceState, oneDriveSyncService } from '../services/oneDriveSync';
 import { OneDriveCloudSnapshot } from '../types/inventory';
 import { db } from '../db/dexieDb';
+import {
+  isFolderSyncSupported,
+  pickOneDriveFolder,
+  getFolderPermission,
+  unlinkOneDriveFolder
+} from '../services/oneDriveFolder';
 
 interface SyncStatusModalProps {
   isOpen: boolean;
@@ -42,17 +44,16 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
   const [cloudSnapshot, setCloudSnapshot] = useState<OneDriveCloudSnapshot | null>(null);
   const [loadingCloud, setLoadingCloud] = useState(false);
   const [queueItems, setQueueItems] = useState<any[]>([]);
-  const [signingIn, setSigningIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderNotice, setFolderNotice] = useState<string | null>(null);
+  const folderSupported = isFolderSyncSupported();
 
   // Local settings draft
-  const [mode, setMode] = useState(syncState.config.mode || 'msal_popup');
-  const [msalClientId, setMsalClientId] = useState(syncState.config.msalClientId || '');
-  const [msalTenantId, setMsalTenantId] = useState(syncState.config.msalTenantId || 'common');
-  const [accessToken, setAccessToken] = useState(syncState.config.accessToken || '');
+  const [mode, setMode] = useState(syncState.config.mode || 'simulated');
   const [folderPath, setFolderPath] = useState(syncState.config.folderPath || 'WLLabInventory');
   const [fileName, setFileName] = useState(syncState.config.fileName || 'inventory_sync.json');
-  const [intervalSec, setIntervalSec] = useState(syncState.config.autoSyncIntervalSeconds || 30);
+  const [intervalSec, setIntervalSec] = useState(syncState.config.autoSyncIntervalSeconds || 60);
   const [conflictPolicy, setConflictPolicy] = useState(syncState.config.conflictResolution || 'last_write_wins');
   const [isAutoEnabled, setIsAutoEnabled] = useState(syncState.config.enabled);
 
@@ -72,27 +73,51 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
     setLoadingCloud(false);
   };
 
-  const handleMicrosoftLogin = async () => {
-    setSigningIn(true);
-    setAuthError(null);
-    const res = await oneDriveSyncService.loginWithMicrosoft();
-    setSigningIn(false);
-    if (!res.success) {
-      setAuthError(res.error || 'Failed to authenticate with Microsoft');
+  const handleLinkFolder = async () => {
+    setLinking(true);
+    setFolderError(null);
+    setFolderNotice(null);
+    try {
+      const name = await pickOneDriveFolder();
+      setMode('local_folder');
+      await oneDriveSyncService.onFolderLinked(name);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') setFolderError(err.message || 'Could not link folder');
+    } finally {
+      setLinking(false);
     }
   };
 
-  const handleMicrosoftLogout = async () => {
-    await oneDriveSyncService.logoutMicrosoft();
+  const handleReconnectFolder = async () => {
+    setFolderError(null);
+    const perm = await getFolderPermission(true);
+    if (perm === 'granted') {
+      await oneDriveSyncService.triggerSync('folder_reconnected');
+    } else {
+      setFolderError('Folder access was not granted. Click "Change Folder" to pick it again.');
+    }
   };
+
+  const handleUnlinkFolder = async () => {
+    await unlinkOneDriveFolder();
+    setMode('simulated');
+    await oneDriveSyncService.updateConfig({ mode: 'simulated', linkedFolderName: '' });
+  };
+
+  const handleForceDownload = async () => {
+    if (!window.confirm('Replace ALL local inventory on this terminal with the copy in the OneDrive folder? Unsynced local changes will be lost.')) return;
+    setFolderError(null);
+    const res = await oneDriveSyncService.forceDownloadFromFolder();
+    if (res.success) setFolderNotice(res.message);
+    else setFolderError(res.message);
+  };
+
+  const folderLinked = syncState.config.mode === 'local_folder' && syncState.folderPermission !== 'none';
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     await oneDriveSyncService.updateConfig({
       mode,
-      msalClientId,
-      msalTenantId,
-      accessToken,
       folderPath,
       fileName,
       autoSyncIntervalSeconds: Number(intervalSec),
@@ -111,7 +136,7 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
             <Cloud className="w-5 h-5 text-sky-400" />
             <div>
               <h3 className="font-bold text-base sm:text-lg leading-tight">Microsoft OneDrive Cloud Sync Center</h3>
-              <p className="text-[11px] text-sky-200">High-Performance Dexie IndexedDB &harr; Microsoft 365 OneDrive</p>
+              <p className="text-[11px] text-sky-200">Dexie IndexedDB &harr; OneDrive folder (synced by the OneDrive app)</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-white/20 rounded cursor-pointer transition text-white">
@@ -129,7 +154,7 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
-            📊 Cloud Status &amp; Account
+            📊 Cloud Status &amp; Folder
           </button>
           <button
             onClick={() => setActiveTab('settings')}
@@ -170,58 +195,95 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
         <div className="p-5 overflow-y-auto flex-1 text-xs sm:text-sm">
           {activeTab === 'status' && (
             <div className="space-y-4">
-              {/* Microsoft Account Authentication Card */}
+              {/* OneDrive Folder Card */}
               <div className="p-4 bg-sky-50/70 border border-sky-200 rounded-lg">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[#002B49] text-white flex items-center justify-center font-bold text-sm shrink-0">
-                      {syncState.config.userDisplayName ? (
-                        syncState.config.userDisplayName.charAt(0).toUpperCase()
-                      ) : (
-                        <Building2 className="w-5 h-5 text-sky-300" />
-                      )}
+                    <div className="w-10 h-10 rounded-full bg-[#002B49] text-white flex items-center justify-center shrink-0">
+                      <FolderSync className="w-5 h-5 text-sky-300" />
                     </div>
                     <div>
                       <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                        <span>{syncState.config.userDisplayName || 'Microsoft 365 Account'}</span>
-                        {syncState.config.isAuthenticated && (
+                        <span>
+                          {folderLinked
+                            ? `OneDrive folder: ${syncState.config.linkedFolderName || 'Linked'}`
+                            : 'No OneDrive folder linked (local demo mode)'}
+                        </span>
+                        {folderLinked && syncState.folderPermission === 'granted' && (
                           <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                             <CheckCircle className="w-3 h-3" /> Connected
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5 font-mono">
-                        {syncState.config.userEmail || 'Corporate Work or School login required for OneDrive sync'}
+                      <div className="text-xs text-slate-600 mt-0.5">
+                        {!folderSupported
+                          ? 'Folder sync needs desktop Chrome or Microsoft Edge.'
+                          : folderLinked && syncState.folderPermission === 'prompt'
+                            ? 'Browser needs permission again for this session. Click Reconnect Folder.'
+                            : folderLinked
+                              ? `Reads and writes ${syncState.config.fileName}. The OneDrive desktop app uploads it.`
+                              : 'Pick your synced OneDrive folder (e.g. OneDrive - Company\\WLLabInventory).'}
                       </div>
                     </div>
                   </div>
 
-                  <div>
-                    {syncState.config.isAuthenticated ? (
+                  {folderSupported && (
+                    <div className="flex flex-wrap gap-2">
+                      {folderLinked && syncState.folderPermission === 'prompt' && (
+                        <button
+                          onClick={handleReconnectFolder}
+                          className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded font-bold text-xs cursor-pointer flex items-center gap-2 transition"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          <span>Reconnect Folder</span>
+                        </button>
+                      )}
                       <button
-                        onClick={handleMicrosoftLogout}
-                        className="px-3 py-1.5 bg-white hover:bg-slate-100 text-rose-700 border border-slate-300 rounded font-semibold text-xs cursor-pointer flex items-center gap-1.5 transition"
-                      >
-                        <LogOut className="w-3.5 h-3.5" />
-                        <span>Disconnect Account</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleMicrosoftLogin}
-                        disabled={signingIn}
+                        onClick={handleLinkFolder}
+                        disabled={linking}
                         className="px-4 py-2 bg-[#0078D4] hover:bg-[#005A9E] text-white rounded font-bold text-xs cursor-pointer shadow-xs active:scale-95 disabled:opacity-50 flex items-center gap-2 transition"
                       >
-                        <LogIn className={`w-4 h-4 ${signingIn ? 'animate-spin' : ''}`} />
-                        <span>{signingIn ? 'Opening Sign-In Popup...' : 'Sign in with Microsoft 365'}</span>
+                        <FolderOpen className="w-4 h-4" />
+                        <span>{linking ? 'Choosing Folder...' : folderLinked ? 'Change Folder' : 'Link OneDrive Folder'}</span>
                       </button>
-                    )}
-                  </div>
+                      {folderLinked && (
+                        <button
+                          onClick={handleUnlinkFolder}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-100 text-rose-700 border border-slate-300 rounded font-semibold text-xs cursor-pointer flex items-center gap-1.5 transition"
+                        >
+                          <Unlink className="w-3.5 h-3.5" />
+                          <span>Unlink</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {authError && (
+                {folderLinked && syncState.folderPermission === 'granted' && (
+                  <div className="mt-3 pt-3 border-t border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-600">
+                      New terminal? Download the shared OneDrive copy first so sample data doesn&apos;t overwrite it.
+                    </p>
+                    <button
+                      onClick={handleForceDownload}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 text-[#002B49] border border-slate-300 rounded font-semibold text-xs cursor-pointer flex items-center gap-1.5 transition shrink-0"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download from OneDrive (replace local)</span>
+                    </button>
+                  </div>
+                )}
+
+                {folderError && (
                   <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded text-xs flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span>{authError}</span>
+                    <span>{folderError}</span>
+                  </div>
+                )}
+                {folderNotice && (
+                  <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded text-xs flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{folderNotice}</span>
                   </div>
                 )}
               </div>
@@ -328,20 +390,21 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
           {activeTab === 'settings' && (
             <form onSubmit={handleSaveSettings} className="space-y-4">
               <div className="bg-sky-50 p-3 rounded-lg border border-sky-200 text-xs text-slate-700">
-                <strong>How Two-Way OneDrive Synchronization Works:</strong> All part updates, stock modifications, and store records are written with zero-latency to Dexie IndexedDB. The background sync engine connects to Microsoft Graph API, compares item timestamps across devices, and uploads merged changes to your company OneDrive folder.
+                <strong>How Two-Way OneDrive Synchronization Works:</strong> All part updates, stock modifications, and store records are written with zero-latency to Dexie IndexedDB. The background sync engine reads and writes a JSON file inside your locally synced OneDrive folder, compares item timestamps across devices, and the OneDrive desktop app uploads the file to the cloud. No Microsoft sign-in is needed in this app.
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Authentication Mode</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Sync Mode</label>
                   <select
                     value={mode}
                     onChange={e => setMode(e.target.value as any)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
                   >
-                    <option value="msal_popup">Microsoft 365 Popup (Corporate Work/School SSO)</option>
+                    <option value="local_folder" disabled={!folderSupported}>
+                      OneDrive folder on this PC (OneDrive desktop app)
+                    </option>
                     <option value="simulated">Simulated OneDrive Cloud (Sandbox / Offline Demo)</option>
-                    <option value="graph_token">Manual Microsoft Graph Bearer Token</option>
                   </select>
                 </div>
 
@@ -355,65 +418,36 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
                   >
                     <option value={10}>Every 10 seconds</option>
-                    <option value={30}>Every 30 seconds (Recommended)</option>
-                    <option value={60}>Every 1 minute</option>
+                    <option value={30}>Every 30 seconds</option>
+                    <option value={60}>Every 1 minute (Recommended)</option>
                     <option value={300}>Every 5 minutes</option>
                   </select>
                 </div>
               </div>
 
-              {mode === 'msal_popup' && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
-                  <div className="text-xs font-bold text-slate-800">Azure AD / Microsoft Entra App Registration (Optional)</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Custom Client (App) ID</label>
-                      <input
-                        type="text"
-                        value={msalClientId}
-                        onChange={e => setMsalClientId(e.target.value)}
-                        placeholder="Default SLB / Microsoft Multi-Tenant App ID"
-                        className="w-full p-1.5 border border-slate-300 rounded text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Tenant ID</label>
-                      <input
-                        type="text"
-                        value={msalTenantId}
-                        onChange={e => setMsalTenantId(e.target.value)}
-                        placeholder="common (or your Organization Tenant ID)"
-                        className="w-full p-1.5 border border-slate-300 rounded text-xs font-mono"
-                      />
-                    </div>
+              {mode === 'local_folder' && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                  <div className="text-xs font-bold text-slate-800">
+                    Linked folder: {syncState.folderPermission !== 'none' ? syncState.config.linkedFolderName || 'Linked' : 'None'}
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleLinkFolder}
+                    disabled={linking}
+                    className="px-3 py-1.5 bg-[#0078D4] hover:bg-[#005A9E] text-white rounded font-bold text-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span>{syncState.folderPermission !== 'none' ? 'Change Folder' : 'Link OneDrive Folder'}</span>
+                  </button>
                   <p className="text-[11px] text-slate-500">
-                    Leave blank to use the standard Microsoft Work/School authentication client with <code>Files.ReadWrite</code> permission.
-                  </p>
-                </div>
-              )}
-
-              {mode === 'graph_token' && (
-                <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
-                  <label className="block text-xs font-bold text-amber-900">
-                    Microsoft Graph Access Token (Bearer Token)
-                  </label>
-                  <input
-                    type="password"
-                    value={accessToken}
-                    onChange={e => setAccessToken(e.target.value)}
-                    placeholder="eyJ0eXAiOiJKV1QiLC..."
-                    className="w-full p-2 border border-amber-500 rounded-lg text-xs font-mono bg-white"
-                  />
-                  <p className="text-[11px] text-amber-800">
-                    Enter an OAuth Bearer token with <code>Files.ReadWrite</code> permission.
+                    Choose the <code>WLLabInventory</code> folder inside your OneDrive (synced by the OneDrive desktop app). The sync file is written directly into it.
                   </p>
                 </div>
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">OneDrive Folder Path</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Folder Label (demo mode storage key)</label>
                   <input
                     type="text"
                     value={folderPath}
@@ -486,7 +520,11 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
                   <h4 className="font-bold text-slate-900 text-xs tracking-wide">
                     OneDrive Cloud Target: {syncState.config.folderPath}/{syncState.config.fileName}
                   </h4>
-                  <p className="text-xs text-slate-500">Live preview of synchronized data stored in Microsoft OneDrive</p>
+                  <p className="text-xs text-slate-500">
+                    {syncState.config.mode === 'local_folder'
+                      ? 'Live preview of the sync file in your linked OneDrive folder'
+                      : 'Live preview of the simulated cloud copy (demo mode)'}
+                  </p>
                 </div>
                 <button
                   onClick={loadCloudData}
@@ -521,7 +559,7 @@ export const SyncStatusModal: React.FC<SyncStatusModalProps> = ({
                 </div>
               ) : (
                 <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-300">
-                  No remote cloud snapshot found yet. Click &quot;Sync to OneDrive Now&quot; to initialize the file in OneDrive!
+                  No snapshot found yet. Link your OneDrive folder, then click &quot;Sync to OneDrive Now&quot; to create the file.
                 </div>
               )}
             </div>

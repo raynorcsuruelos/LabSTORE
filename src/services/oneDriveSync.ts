@@ -1,4 +1,4 @@
-import { db, getSetting, setSetting, logHistory } from '../db/dexieDb';
+import { db, getSetting, setSetting, logHistory, DEFAULT_ONEDRIVE_CONFIG } from '../db/dexieDb';
 import {
   OneDriveConfig,
   SyncState,
@@ -7,7 +7,14 @@ import {
   SubStore,
   OneDriveCloudSnapshot
 } from '../types/inventory';
-import { msalAuth } from './msalAuth';
+import {
+  FolderPermission,
+  getFolderPermission,
+  readFolderSnapshot,
+  writeFolderSnapshot,
+  writeDailyBackup,
+  readConflictCopies
+} from './oneDriveFolder';
 
 type SyncListener = (status: SyncServiceState) => void;
 
@@ -26,8 +33,12 @@ export interface SyncServiceState {
   lastSyncTime: string | null;
   errorMessage: string | null;
   config: OneDriveConfig;
+  folderPermission: FolderPermission;
   logs: SyncLogEntry[];
 }
+
+// Wait this long after the last local edit before pushing to OneDrive
+const EDIT_DEBOUNCE_MS = 5000;
 
 class OneDriveSyncService {
   private timer: any = null;
@@ -36,10 +47,27 @@ class OneDriveSyncService {
   private logs: SyncLogEntry[] = [];
   private currentStatus: SyncState = 'synced';
   private errorMessage: string | null = null;
+  private editTimer: any = null;
 
   constructor() {
     this.addLog('info', 'OneDrive Background Two-Way Sync engine initialized.');
     this.setupNetworkListeners();
+    // Push local edits shortly after they happen, batched
+    db.syncQueue.hook('creating', () => {
+      this.scheduleSyncAfterEdit();
+    });
+  }
+
+  private scheduleSyncAfterEdit() {
+    if (this.editTimer) clearTimeout(this.editTimer);
+    this.editTimer = setTimeout(() => {
+      this.editTimer = null;
+      this.triggerSync('local_edit');
+    }, EDIT_DEBOUNCE_MS);
+  }
+
+  private async getConfig(): Promise<OneDriveConfig> {
+    return getSetting<OneDriveConfig>('oneDriveConfig', DEFAULT_ONEDRIVE_CONFIG);
   }
 
   private setupNetworkListeners() {
@@ -69,26 +97,11 @@ class OneDriveSyncService {
   }
 
   public async getState(): Promise<SyncServiceState> {
-    const config = await getSetting<OneDriveConfig>('oneDriveConfig', {
-      enabled: true,
-      mode: 'msal_popup',
-      accessToken: '',
-      msalClientId: '',
-      msalTenantId: 'common',
-      userDisplayName: '',
-      userEmail: '',
-      isAuthenticated: false,
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins',
-      remoteLastModified: null
-    });
+    const config = await this.getConfig();
 
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const pendingCount = await db.syncQueue.where('status').equals('pending').count();
+    const folderPermission = await getFolderPermission().catch(() => 'none' as FolderPermission);
 
     let computedStatus = this.currentStatus;
     if (!isOnline) {
@@ -110,6 +123,7 @@ class OneDriveSyncService {
       lastSyncTime: config.lastSyncTime,
       errorMessage: this.errorMessage,
       config,
+      folderPermission,
       logs: this.logs.slice(-50)
     };
   }
@@ -128,23 +142,14 @@ class OneDriveSyncService {
 
   public async startBackgroundWorker() {
     this.stopBackgroundWorker();
-    const config = await getSetting<OneDriveConfig>('oneDriveConfig', {
-      enabled: true,
-      mode: 'msal_popup',
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins'
-    });
+    const config = await this.getConfig();
 
     if (!config.enabled) {
       this.addLog('info', 'Background auto-sync is currently paused.');
       return;
     }
 
-    const intervalMs = Math.max(10, config.autoSyncIntervalSeconds || 30) * 1000;
+    const intervalMs = Math.max(10, config.autoSyncIntervalSeconds || 60) * 1000;
     this.timer = setInterval(() => {
       this.triggerSync('timer');
     }, intervalMs);
@@ -162,16 +167,7 @@ class OneDriveSyncService {
   }
 
   public async updateConfig(newConfig: Partial<OneDriveConfig>) {
-    const current = await getSetting<OneDriveConfig>('oneDriveConfig', {
-      enabled: true,
-      mode: 'msal_popup',
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins'
-    });
+    const current = await this.getConfig();
 
     const merged: OneDriveConfig = { ...current, ...newConfig };
     await setSetting('oneDriveConfig', merged);
@@ -180,49 +176,40 @@ class OneDriveSyncService {
     await this.notifyListeners();
   }
 
-  // One-click Microsoft 365 sign in
-  public async loginWithMicrosoft(): Promise<{ success: boolean; error?: string }> {
-    try {
-      this.addLog('info', 'Opening Microsoft corporate sign-in popup...');
-      const result = await msalAuth.loginPopup();
-      if (!result.success || !result.account) {
-        const msg = result.error || 'Microsoft login cancelled';
-        this.addLog('warn', `Microsoft sign-in: ${msg}`);
-        return { success: false, error: msg };
-      }
-
-      const account = result.account;
-      const token = result.token || (await msalAuth.getAccessToken()) || '';
-
-      await this.updateConfig({
-        mode: 'msal_popup',
-        isAuthenticated: true,
-        accessToken: token,
-        userDisplayName: account.name || account.username || 'Microsoft User',
-        userEmail: account.username || '',
-      });
-
-      this.addLog('success', `Signed in as ${account.name} (${account.username}). Starting initial cloud sync.`);
-      // Immediately run sync to download any remote inventory
-      setTimeout(() => this.triggerSync('after_login'), 500);
-      return { success: true };
-    } catch (err: any) {
-      const msg = err.message || 'Microsoft sign-in failed';
-      this.addLog('error', `Sign in error: ${msg}`);
-      return { success: false, error: msg };
-    }
+  // Called after the user links or reconnects the OneDrive folder
+  public async onFolderLinked(folderName: string): Promise<void> {
+    await this.updateConfig({ mode: 'local_folder', linkedFolderName: folderName });
+    this.addLog('success', `Linked OneDrive folder "${folderName}". Starting initial sync.`);
+    setTimeout(() => this.triggerSync('folder_linked'), 300);
   }
 
-  // Microsoft sign out
-  public async logoutMicrosoft(): Promise<void> {
-    await msalAuth.logout();
-    await this.updateConfig({
-      isAuthenticated: false,
-      accessToken: '',
-      userDisplayName: '',
-      userEmail: ''
-    });
-    this.addLog('info', 'Signed out from Microsoft account.');
+  // Replace this terminal's local data with the OneDrive copy (use when setting up a new terminal,
+  // otherwise freshly seeded sample data would look newer and overwrite the shared file)
+  public async forceDownloadFromFolder(): Promise<{ success: boolean; message: string }> {
+    try {
+      const config = await this.getConfig();
+      const remote = await readFolderSnapshot(config.fileName);
+      if (!remote || !Array.isArray(remote.snapshot.items)) {
+        return { success: false, message: `${config.fileName} was not found in the linked folder.` };
+      }
+      const { snapshot } = remote;
+      await db.transaction('rw', db.inventory, db.stores, db.syncQueue, async () => {
+        await db.syncQueue.clear();
+        await db.inventory.clear();
+        await db.inventory.bulkPut(snapshot.items);
+        if (Array.isArray(snapshot.stores) && snapshot.stores.length > 0) {
+          await db.stores.clear();
+          await db.stores.bulkPut(snapshot.stores);
+        }
+      });
+      await this.updateConfig({ remoteLastModified: remote.lastModified, lastSyncTime: new Date().toISOString() });
+      const msg = `Replaced local data with OneDrive copy (${snapshot.items.length} items).`;
+      this.addLog('success', msg);
+      return { success: true, message: msg };
+    } catch (err: any) {
+      this.addLog('error', `Download failed: ${err.message}`);
+      return { success: false, message: err.message };
+    }
   }
 
   // Master synchronization trigger
@@ -237,16 +224,7 @@ class OneDriveSyncService {
       return { success: false, message: 'Device is offline. Changes remain queued in IndexedDB.' };
     }
 
-    const config = await getSetting<OneDriveConfig>('oneDriveConfig', {
-      enabled: true,
-      mode: 'msal_popup',
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins'
-    });
+    const config = await this.getConfig();
 
     this.isSyncing = true;
     this.currentStatus = 'syncing';
@@ -256,22 +234,18 @@ class OneDriveSyncService {
     try {
       this.addLog('info', `Two-way sync initiated [Source: ${source}] (Mode: ${config.mode}).`);
 
-      // Determine active bearer token if using Microsoft Graph
-      let activeToken = config.accessToken;
-      if (config.mode === 'msal_popup') {
-        const freshToken = await msalAuth.getAccessToken();
-        if (freshToken) {
-          activeToken = freshToken;
-        } else if (!config.isAuthenticated) {
-          // If in MSAL mode but not signed in yet, fall back gracefully to simulated local sync
-          this.addLog('info', 'Microsoft 365 not signed in yet. Operating in local simulated cloud synchronization.');
-        }
-      }
+      const useFolder = config.mode === 'local_folder';
 
-      // Step 1: Pull remote snapshot if available (Two-Way Sync)
+      // Step 1: Pull remote snapshot (Two-Way Sync)
       let remoteSnapshot: OneDriveCloudSnapshot | null = null;
-      if ((config.mode === 'msal_popup' && activeToken) || (config.mode === 'graph_token' && activeToken)) {
-        remoteSnapshot = await this.fetchRemoteSnapshotGraph(config, activeToken);
+      if (useFolder) {
+        const remote = await readFolderSnapshot(config.fileName);
+        if (remote) {
+          remoteSnapshot = remote.snapshot;
+          config.remoteLastModified = remote.lastModified;
+        } else {
+          this.addLog('info', `${config.fileName} not found in the linked folder yet. It will be created now.`);
+        }
       } else {
         remoteSnapshot = await this.fetchRemoteSnapshotSimulated(config);
       }
@@ -280,6 +254,17 @@ class OneDriveSyncService {
       let pulledCount = 0;
       if (remoteSnapshot && Array.isArray(remoteSnapshot.items)) {
         pulledCount = await this.reconcileRemoteData(remoteSnapshot, config.conflictResolution);
+      }
+
+      // Step 2b: Merge OneDrive conflict copies (created when two PCs saved at the same time)
+      if (useFolder) {
+        const copies = await readConflictCopies(config.fileName);
+        for (const copy of copies) {
+          if (Array.isArray(copy.snapshot?.items)) {
+            pulledCount += await this.reconcileRemoteData(copy.snapshot, 'last_write_wins');
+          }
+          this.addLog('warn', `Merged OneDrive conflict copy "${copy.name}". Delete it from the folder once all terminals have synced.`);
+        }
       }
 
       // Step 3: Fetch updated local dataset and queue
@@ -297,11 +282,24 @@ class OneDriveSyncService {
         historyCount
       };
 
-      // Step 4: Upload reconciled snapshot to OneDrive
-      if ((config.mode === 'msal_popup' && activeToken) || (config.mode === 'graph_token' && activeToken)) {
-        await this.uploadSnapshotGraph(config, activeToken, mergedSnapshot);
-      } else {
-        await this.uploadSnapshotSimulated(config, mergedSnapshot);
+      // Step 4: Write reconciled snapshot only when something changed,
+      // so idle terminals don't keep rewriting the file (and causing OneDrive conflict copies)
+      const needsUpload =
+        !remoteSnapshot ||
+        pendingItems.length > 0 ||
+        (remoteSnapshot.items?.length || 0) !== currentInventory.length ||
+        (remoteSnapshot.stores?.length || 0) !== currentStores.length;
+
+      if (needsUpload) {
+        if (useFolder) {
+          await writeFolderSnapshot(config.fileName, mergedSnapshot);
+          this.addLog('info', `Wrote ${config.fileName} to the OneDrive folder (${currentInventory.length} items). OneDrive will upload it.`);
+        } else {
+          await this.uploadSnapshotSimulated(config, mergedSnapshot);
+        }
+      }
+      if (useFolder && (await writeDailyBackup(config.fileName, mergedSnapshot))) {
+        this.addLog('info', 'Saved daily backup to backups/ in the OneDrive folder.');
       }
 
       // Step 5: Mark all pending mutations as resolved
@@ -403,78 +401,6 @@ class OneDriveSyncService {
     return updatedCount;
   }
 
-  // Fetch remote snapshot from Microsoft Graph
-  private async fetchRemoteSnapshotGraph(
-    config: OneDriveConfig,
-    token: string
-  ): Promise<OneDriveCloudSnapshot | null> {
-    const cleanFolder = (config.folderPath || 'WLLabInventory').replace(/^\/+|\/+$/g, '');
-    const cleanFile = config.fileName || 'inventory_sync.json';
-    const graphEndpoint = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(cleanFolder)}/${encodeURIComponent(cleanFile)}:/content`;
-
-    try {
-      const res = await fetch(graphEndpoint, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      if (res.status === 404) {
-        // File does not exist yet on OneDrive (first sync)
-        this.addLog('info', `File does not exist on OneDrive yet. A new file will be created in /${cleanFolder}/${cleanFile}`);
-        return null;
-      }
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch cloud snapshot: HTTP ${res.status}`);
-      }
-
-      const json = await res.json();
-      return json;
-    } catch (err: any) {
-      this.addLog('warn', `Notice reading OneDrive file: ${err.message}`);
-      return null;
-    }
-  }
-
-  // Upload snapshot to Microsoft Graph API
-  private async uploadSnapshotGraph(
-    config: OneDriveConfig,
-    token: string,
-    snapshot: OneDriveCloudSnapshot
-  ) {
-    const cleanFolder = (config.folderPath || 'WLLabInventory').replace(/^\/+|\/+$/g, '');
-    const cleanFile = config.fileName || 'inventory_sync.json';
-    const graphEndpoint = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(cleanFolder)}/${encodeURIComponent(cleanFile)}:/content`;
-
-    this.addLog('info', `Uploading synchronized dataset to OneDrive: /${cleanFolder}/${cleanFile}`);
-
-    const res = await fetch(graphEndpoint, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(snapshot, null, 2)
-    });
-
-    if (!res.ok) {
-      let errMsg = `HTTP ${res.status}: ${res.statusText}`;
-      try {
-        const errJson = await res.json();
-        if (errJson.error && errJson.error.message) {
-          errMsg = errJson.error.message;
-        }
-      } catch {
-        // fallback
-      }
-      throw new Error(`OneDrive upload failed: ${errMsg}`);
-    }
-
-    this.addLog('success', 'Microsoft Graph upload succeeded. Multi-device cloud sync updated.');
-  }
-
   // Fetch simulated cloud snapshot
   private async fetchRemoteSnapshotSimulated(config: OneDriveConfig): Promise<OneDriveCloudSnapshot | null> {
     const cloudKey = `wllab_onedrive_cloud_${config.folderPath}_${config.fileName}`;
@@ -497,29 +423,15 @@ class OneDriveSyncService {
 
   // Inspect current cloud snapshot for UI inspection
   public async getCloudSnapshot(): Promise<OneDriveCloudSnapshot | null> {
-    const config = await getSetting<OneDriveConfig>('oneDriveConfig', {
-      enabled: true,
-      mode: 'msal_popup',
-      folderPath: 'WLLabInventory',
-      fileName: 'inventory_sync.json',
-      autoSyncIntervalSeconds: 30,
-      lastSyncTime: null,
-      lastSyncStatus: 'synced',
-      conflictResolution: 'last_write_wins'
-    });
+    const config = await this.getConfig();
 
-    let token = config.accessToken;
-    if (config.mode === 'msal_popup') {
-      const fresh = await msalAuth.getAccessToken();
-      if (fresh) token = fresh;
-    }
-
-    if (token) {
+    if (config.mode === 'local_folder') {
       try {
-        const snap = await this.fetchRemoteSnapshotGraph(config, token);
-        if (snap) return snap;
-      } catch {
-        // fall back to simulated
+        const remote = await readFolderSnapshot(config.fileName);
+        return remote ? remote.snapshot : null;
+      } catch (err: any) {
+        this.addLog('warn', `Could not read OneDrive folder: ${err.message}`);
+        return null;
       }
     }
 
