@@ -23,7 +23,6 @@ function describeError(error: unknown): string {
     return 'Sign-in is not available here. Run the app with "netlify dev" or open the deployed site.';
   }
   if (error instanceof AuthError) {
-    if (error.status === 404) return 'Accounts are not set up on this site yet. Netlify Identity must be enabled under Project configuration → Identity.';
     if (error.status === 401) return 'Invalid email or password.';
     if (error.status === 403) return 'New sign-ups are disabled. Ask the administrator for an invite.';
     if (error.status === 422) return 'Check the email address and use a password of at least 8 characters.';
@@ -43,7 +42,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [checking, setChecking] = useState(true);
   const [view, setView] = useState<View>('login');
   const [inviteToken, setInviteToken] = useState<string | null>(null);
-  const [signupAllowed, setSignupAllowed] = useState(true);
+  const [signupAllowed, setSignupAllowed] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -74,7 +73,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
       }
       getSettings()
         .then(s => active && setSignupAllowed(!s.disableSignup))
-        .catch(err => active && setError(describeError(err)));
+        .catch(() => {});
     })();
 
     const unsubscribe = onAuthChange((event, u) => {
@@ -161,8 +160,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             <OilRigLogo className="w-10 h-10" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight leading-tight">WL Kit Finder</h1>
-            <p className="text-xs text-blue-200/80">Wireline Labs · Kit &amp; Parts Finder</p>
+            <h1 className="text-xl font-bold tracking-tight leading-tight">WL Lab Inventory</h1>
+            <p className="text-xs text-blue-200/80">Wireline Laboratory · Parts &amp; Stock Manager</p>
           </div>
         </div>
 
