@@ -23,6 +23,7 @@ function describeError(error: unknown): string {
     return 'Sign-in is not available here. Run the app with "netlify dev" or open the deployed site.';
   }
   if (error instanceof AuthError) {
+    if (error.status === 404) return 'Accounts are not set up on this site yet. Netlify Identity must be enabled under Project configuration → Identity.';
     if (error.status === 401) return 'Invalid email or password.';
     if (error.status === 403) return 'New sign-ups are disabled. Ask the administrator for an invite.';
     if (error.status === 422) return 'Check the email address and use a password of at least 8 characters.';
@@ -73,7 +74,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
       }
       getSettings()
         .then(s => active && setSignupAllowed(!s.disableSignup))
-        .catch(() => {});
+        .catch(err => active && setError(describeError(err)));
     })();
 
     const unsubscribe = onAuthChange((event, u) => {
