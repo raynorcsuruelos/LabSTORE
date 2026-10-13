@@ -1,6 +1,8 @@
 [build]
+  base = "kit-finder"
   command = "bun install && bun run build"
   publish = "dist"
+  functions = "netlify/functions"
 
 [dev]
   command = "bun run dev"
