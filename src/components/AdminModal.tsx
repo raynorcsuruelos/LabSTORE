@@ -27,6 +27,7 @@ interface AdminModalProps {
   items: InventoryItem[];
   stores: SubStore[];
   currentStoreId: string;
+  isSuperAdmin: boolean;
   globalThreshold: number;
   onApplyAdjust: (
     partNumber: string,
@@ -56,6 +57,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   items,
   stores,
   currentStoreId,
+  isSuperAdmin,
   globalThreshold,
   onApplyAdjust,
   onWithdraw,
@@ -100,6 +102,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [confirmPass, setConfirmPass] = useState('');
   const [passError, setPassError] = useState('');
 
+  // Current store's own password
+  const [storeCurPass, setStoreCurPass] = useState('');
+  const [storeNewPass, setStoreNewPass] = useState('');
+  const [storeConfirmPass, setStoreConfirmPass] = useState('');
+  const [storePassError, setStorePassError] = useState('');
+
   // Global threshold state
   const [threshInput, setThreshInput] = useState(String(globalThreshold));
 
@@ -114,6 +122,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [targetStoreNewPass, setTargetStoreNewPass] = useState('');
 
   const currentStore = stores.find(s => s.id === currentStoreId);
+  // Store admins only see and manage their own store
+  const visibleStores = isSuperAdmin ? stores : stores.filter(s => s.id === currentStoreId);
   const selectedItem = items.find(i => i.partNumber === selectedPartNumber);
 
   const handleAdjustSubmit = (e: React.FormEvent) => {
@@ -182,9 +192,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     e.preventDefault();
     setPassError('');
 
-    const verifyRes = await verifyAdminPassword(curPass, currentStoreId);
-    if (!verifyRes.success) {
-      setPassError(verifyRes.message || 'Current password is incorrect.');
+    if (!isSuperAdmin) {
+      setPassError('Only the master administrator can change the master password.');
+      return;
+    }
+    // No storeId: only the current master password is accepted here
+    const verifyRes = await verifyAdminPassword(curPass);
+    if (!verifyRes.success || !verifyRes.isSuperAdmin) {
+      setPassError(verifyRes.message || 'Current master password is incorrect.');
       return;
     }
     if (!newPass.trim()) {
@@ -204,7 +219,33 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setCurPass('');
     setNewPass('');
     setConfirmPass('');
-    showToast('Admin password securely updated with cryptographic hashing!', 'success');
+    showToast('Master admin password securely updated with cryptographic hashing!', 'success');
+  };
+
+  const handleStorePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStorePassError('');
+
+    // Accepts this store's current password (or the master password)
+    const verifyRes = await verifyAdminPassword(storeCurPass, currentStoreId);
+    if (!verifyRes.success) {
+      setStorePassError(verifyRes.message || 'Current password is incorrect.');
+      return;
+    }
+    if (storeNewPass.length < 6) {
+      setStorePassError('Password must be at least 6 characters.');
+      return;
+    }
+    if (storeNewPass !== storeConfirmPass) {
+      setStorePassError('New passwords do not match.');
+      return;
+    }
+
+    await setStoreAdminPassword(currentStoreId, storeNewPass);
+    setStoreCurPass('');
+    setStoreNewPass('');
+    setStoreConfirmPass('');
+    showToast(`Admin password for ${currentStore?.name || 'this store'} updated.`, 'success');
   };
 
   const handleCreateStoreSubmit = (e: React.FormEvent) => {
@@ -232,6 +273,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   };
 
   const handleSaveStoreSpecificPassword = async (storeId: string) => {
+    if (!isSuperAdmin) {
+      showToast('Only the master administrator can reset another store\'s password.', 'error');
+      return;
+    }
     if (targetStoreNewPass.length < 6) {
       showToast('Password must be at least 6 characters.', 'error');
       return;
@@ -364,7 +409,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 : 'border-transparent text-gray-600 hover:text-black'
             }`}
           >
-            🏢 Sub-Stores ({stores.length})
+            🏢 {isSuperAdmin ? `Sub-Stores (${stores.length})` : 'My Store'}
           </button>
           <button
             onClick={() => setActiveTab('import')}
@@ -648,12 +693,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               {/* Existing Sub-Stores List */}
               <div>
                 <div className="text-sm font-bold text-[#003057] uppercase tracking-wide mb-2 flex items-center justify-between">
-                  <span>Configured Wireline Sub-Stores ({stores.length})</span>
+                  <span>{isSuperAdmin ? `Configured Wireline Sub-Stores (${stores.length})` : 'Your Sub-Store'}</span>
                   <span className="text-xs text-gray-500 font-normal">Each store maintains its own parts, stock &amp; admin</span>
                 </div>
 
                 <div className="space-y-3">
-                  {stores.map(s => {
+                  {visibleStores.map(s => {
                     const isCurrent = s.id === currentStoreId;
                     return (
                       <div
@@ -695,6 +740,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             </button>
                           )}
 
+                          {isSuperAdmin && (
                           <button
                             onClick={() => {
                               setEditingStorePassId(editingStorePassId === s.id ? null : s.id);
@@ -705,8 +751,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <KeyRound className="w-3.5 h-3.5" />
                             <span>Assign Password</span>
                           </button>
+                          )}
 
-                          {stores.length > 1 && (
+                          {isSuperAdmin && stores.length > 1 && (
                             <button
                               onClick={() => onDeleteStore(s.id)}
                               className="p-1.5 text-red-600 hover:text-white hover:bg-red-600 rounded-lg border border-red-300 transition cursor-pointer"
@@ -718,7 +765,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         </div>
 
                         {/* Inline password editor for this store */}
-                        {editingStorePassId === s.id && (
+                        {isSuperAdmin && editingStorePassId === s.id && (
                           <div className="w-full pt-3 mt-2 border-t border-gray-200 flex items-center gap-2">
                             <input
                               type="password"
@@ -747,7 +794,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               </div>
 
+              {!isSuperAdmin && (
+                <p className="text-[11px] text-gray-500">
+                  Store admins manage only their own store. Change this store's password under Admin Settings.
+                  Creating, deleting or resetting other stores requires the master administrator password.
+                </p>
+              )}
+
               {/* Add New Sub-Store Form */}
+              {isSuperAdmin && (
               <div className="p-4 bg-gray-50 border-2 border-gray-300 rounded-xl space-y-3">
                 <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1.5">
                   <Building2 className="w-4 h-4 text-[#0066a1]" />
@@ -819,6 +874,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 </form>
               </div>
+              )}
             </div>
           )}
 
@@ -870,7 +926,74 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* TAB: SETTINGS */}
           {activeTab === 'settings' && (
             <div className="space-y-6">
-              {/* Change Password */}
+              {/* Change This Store's Password */}
+              <form onSubmit={handleStorePasswordChange} className="space-y-3 max-w-sm">
+                <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Change {currentStore?.name || 'Store'} Admin Password</span>
+                </div>
+
+                {storePassError && (
+                  <div className="p-2 bg-red-50 text-[#c0392b] border border-red-300 rounded text-xs font-semibold">
+                    {storePassError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Current Store Password</label>
+                  <input
+                    type="password"
+                    value={storeCurPass}
+                    onChange={e => setStoreCurPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">New Password (Min 6 chars)</label>
+                  <input
+                    type="password"
+                    value={storeNewPass}
+                    onChange={e => setStoreNewPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={storeConfirmPass}
+                    onChange={e => setStoreConfirmPass(e.target.value)}
+                    className="w-full p-2 border-2 border-black rounded-lg text-xs"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-[#8e44ad] hover:bg-[#732d91] text-white rounded-lg font-bold border-2 border-black cursor-pointer text-xs"
+                >
+                  Change Store Password
+                </button>
+                <p className="text-[11px] text-gray-500">
+                  This password unlocks {currentStore?.name || 'this store'} only.
+                </p>
+              </form>
+
+              {!isSuperAdmin && (
+                <p className="text-[11px] text-gray-500">
+                  Master password, global threshold and demo data reset are available to the master administrator only.
+                </p>
+              )}
+
+              {isSuperAdmin && (
+              <>
+              <hr className="border-gray-300" />
+
+              {/* Change Master Password */}
               <form onSubmit={handlePasswordChange} className="space-y-3 max-w-sm">
                 <div className="text-xs font-bold text-[#003057] uppercase tracking-wide flex items-center gap-1">
                   <Key className="w-3.5 h-3.5" />
@@ -884,7 +1007,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 )}
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Current Password</label>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Current Master Password</label>
                   <input
                     type="password"
                     value={curPass}
@@ -920,7 +1043,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   type="submit"
                   className="px-4 py-1.5 bg-[#8e44ad] hover:bg-[#732d91] text-white rounded-lg font-bold border-2 border-black cursor-pointer text-xs"
                 >
-                  Change Password
+                  Change Master Password
                 </button>
               </form>
 
@@ -977,6 +1100,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   Resets the IndexedDB table with standard Schlumberger Wireline laboratory parts for Sonde Lab, E-Lab, and WHE.
                 </p>
               </div>
+              </>
+              )}
             </div>
           )}
         </div>

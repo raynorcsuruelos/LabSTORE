@@ -107,6 +107,7 @@ function InventoryApp() {
       lastSyncStatus: 'synced',
       conflictResolution: 'last_write_wins'
     },
+    folderPermission: 'none',
     logs: []
   });
 
@@ -126,20 +127,23 @@ function InventoryApp() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   // Security & Admin Session Management
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Admin access is bound to the store that was unlocked; only the master password unlocks every store
+  const [adminSession, setAdminSession] = useState<{ storeId: string; isSuperAdmin: boolean } | null>(null);
+  const isSuperAdmin = !!adminSession?.isSuperAdmin;
+  const isAdmin = !!adminSession && adminSession.storeId === currentStore.id;
   const [pendingAdminAction, setPendingAdminAction] = useState<PendingAdminAction | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
   // Inactivity auto-lock timer (15 minutes)
   const handleLockAdmin = useCallback(() => {
-    if (isAdmin) {
-      setIsAdmin(false);
+    if (adminSession) {
+      setAdminSession(null);
       setPendingAdminAction(null);
       setAdjustingItem(null);
       setAdminModalOpen(false);
       showToast('Admin session locked for security.', 'info');
     }
-  }, [isAdmin, showToast]);
+  }, [adminSession, showToast]);
 
   useEffect(() => {
     const handleUserActivity = () => {
@@ -151,7 +155,7 @@ function InventoryApp() {
     window.addEventListener('touchstart', handleUserActivity);
 
     const interval = setInterval(() => {
-      if (isAdmin && Date.now() - lastActivityRef.current > 15 * 60 * 1000) {
+      if (adminSession && Date.now() - lastActivityRef.current > 15 * 60 * 1000) {
         handleLockAdmin();
       }
     }, 60000);
@@ -162,7 +166,19 @@ function InventoryApp() {
       window.removeEventListener('touchstart', handleUserActivity);
       clearInterval(interval);
     };
-  }, [isAdmin, handleLockAdmin]);
+  }, [adminSession, handleLockAdmin]);
+
+  // Switching to another store always ends the admin session (store or master);
+  // the next store must be unlocked again with its own password
+  useEffect(() => {
+    if (adminSession && adminSession.storeId !== currentStore.id) {
+      setAdminSession(null);
+      setPendingAdminAction(null);
+      setAdjustingItem(null);
+      setAdminModalOpen(false);
+      showToast('Admin access disabled after switching store. Enter the password for this store.', 'info');
+    }
+  }, [adminSession, currentStore.id, showToast]);
 
   // Initialize DB and background sync worker on mount
   useEffect(() => {
@@ -299,11 +315,16 @@ function InventoryApp() {
     }
   };
 
-  const handleAdminLoginSuccess = async () => {
-    setIsAdmin(true);
+  const handleAdminLoginSuccess = async ({ isSuperAdmin: asSuperAdmin }: { isSuperAdmin: boolean }) => {
+    setAdminSession({ storeId: currentStore.id, isSuperAdmin: asSuperAdmin });
     setAdminLoginOpen(false);
     lastActivityRef.current = Date.now();
-    showToast(`Admin access granted for ${currentStore?.name || 'Store'}!`, 'success');
+    showToast(
+      asSuperAdmin
+        ? 'Master admin access granted for all stores!'
+        : `Store admin access granted for ${currentStore?.name || 'Store'} only.`,
+      'success'
+    );
 
     if (pendingAdminAction) {
       const pending = pendingAdminAction;
@@ -331,7 +352,7 @@ function InventoryApp() {
         } else if (
           window.confirm(`Withdraw all ${pending.item.quantity} unit(s) of "${pending.item.partNumber}"? Stock will be set to 0.`)
         ) {
-          handleWithdraw(pending.item.partNumber, 'Direct row withdraw by admin');
+          handleWithdraw(pending.item.partNumber, 'Direct row withdraw by admin', true);
         }
       } else if (pending.type === 'admin_panel') {
         setAdminModalOpen(true);
@@ -362,8 +383,8 @@ function InventoryApp() {
     }
   };
 
-  const handleWithdraw = async (partNumber: string, reason: string) => {
-    if (!isAdmin) {
+  const handleWithdraw = async (partNumber: string, reason: string, justAuthorized = false) => {
+    if (!isAdmin && !justAuthorized) {
       showToast('Admin authorization required to withdraw stock.', 'error');
       return;
     }
@@ -432,7 +453,14 @@ function InventoryApp() {
   };
 
   // Sub-Store Management
+  const requireMasterAdmin = (what: string) => {
+    if (isSuperAdmin) return true;
+    showToast(`Only the master administrator can ${what}.`, 'error');
+    return false;
+  };
+
   const handleCreateStore = async (name: string, code: string, description: string, password: string) => {
+    if (!requireMasterAdmin('create sub-stores')) return;
     const slugId = code.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
     const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     const hash = await hashPassword(password, salt);
@@ -443,7 +471,8 @@ function InventoryApp() {
       code: code.toUpperCase(),
       description,
       adminPasswordHash: { hash, salt },
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     await db.stores.put(newStore);
@@ -453,6 +482,7 @@ function InventoryApp() {
   };
 
   const handleDeleteStore = async (storeId: string) => {
+    if (!requireMasterAdmin('delete sub-stores')) return;
     if (allStores.length <= 1) {
       showToast('Cannot delete the last remaining store.', 'error');
       return;
@@ -544,6 +574,7 @@ function InventoryApp() {
   };
 
   const handleResetSampleData = async () => {
+    if (!requireMasterAdmin('reset data for all stores')) return;
     if (!window.confirm('Reset local inventory to Schlumberger Wireline Lab standard sample dataset across all stores?')) return;
     await db.inventory.clear();
     await db.stores.clear();
@@ -552,11 +583,13 @@ function InventoryApp() {
   };
 
   const handleSaveGlobalThreshold = async (val: number) => {
+    if (!requireMasterAdmin('change the global threshold')) return;
     await setSetting('globalThreshold', val);
     showToast(`Global low-stock threshold default set to ${val}.`, 'success');
   };
 
   const handleClearHistory = async () => {
+    if (!requireMasterAdmin('clear the audit history')) return;
     if (!window.confirm('Clear all transaction audit logs? This cannot be undone.')) return;
     await db.history.clear();
     showToast('Transaction audit history cleared.', 'info');
@@ -595,7 +628,7 @@ function InventoryApp() {
     ? `Enter administrator password for ${currentStore.name} to modify stock count or safety threshold for part ${pendingAdminAction.item.partNumber}.`
     : pendingAdminAction?.type === 'withdraw' && pendingAdminAction.item
     ? `Enter administrator password for ${currentStore.name} to withdraw inventory for part ${pendingAdminAction.item.partNumber}.`
-    : `Enter the assigned administrator password for ${currentStore.name} (or master administrator password) to manage this sub-store.`;
+    : `Enter the administrator password for ${currentStore.name} (or the master password) to manage this sub-store. A store password only unlocks its own store.`;
 
   return (
     <div className="min-h-screen bg-[#e9edf2] flex flex-col items-center p-0 sm:py-3 sm:px-2">
@@ -683,7 +716,7 @@ function InventoryApp() {
             </span>
             <span>·</span>
             <span>
-              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
+              Role: <strong className={isAdmin ? 'text-emerald-700 font-bold' : 'text-gray-700'}>{isSuperAdmin ? 'MASTER ADMIN' : isAdmin ? 'STORE ADMIN' : 'OPERATOR'}</strong>
             </span>
             <span>·</span>
             <span>Sync: {syncState.status.toUpperCase()}</span>
@@ -745,6 +778,7 @@ function InventoryApp() {
         items={storeItems}
         stores={allStores.length > 0 ? allStores : DEFAULT_STORES}
         currentStoreId={currentStore.id}
+        isSuperAdmin={isSuperAdmin}
         globalThreshold={globalThreshold}
         onApplyAdjust={handleApplyAdjust}
         onWithdraw={handleWithdraw}
