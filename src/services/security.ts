@@ -1,4 +1,4 @@
-import { getSetting, setSetting, db } from '../db/dexieDb';
+import { getSetting, setSetting, db, enqueueSync } from '../db/dexieDb';
 
 const DEFAULT_SALT = 'WL_LAB_INVENTORY_SECURITY_SALT_2025';
 const DEFAULT_INITIAL_PASS = 'WLAdmin2025';
@@ -126,7 +126,9 @@ export async function setStoreAdminPassword(storeId: string, newPassword: string
 
   const store = await db.stores.get(storeId);
   if (store) {
-    await db.stores.update(storeId, { adminPasswordHash: record });
+    const updatedAt = new Date().toISOString();
+    await db.stores.update(storeId, { adminPasswordHash: record, updatedAt });
+    await enqueueSync('STORE_MUTATION', storeId, { action: 'UPDATE_STORE_PASSWORD', storeId }, storeId);
   }
 }
 

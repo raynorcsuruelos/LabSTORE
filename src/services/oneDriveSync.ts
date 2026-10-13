@@ -358,6 +358,12 @@ class OneDriveSyncService {
         if (!existing) {
           await db.stores.add(remoteStore);
           this.addLog('info', `Imported new store from cloud: "${remoteStore.name}"`);
+        } else if (
+          new Date(remoteStore.updatedAt || 0).getTime() > new Date(existing.updatedAt || 0).getTime()
+        ) {
+          // Newer store record from another terminal (e.g. changed store admin password)
+          await db.stores.put(remoteStore);
+          this.addLog('info', `Updated store "${remoteStore.name}" from cloud.`);
         }
       }
     }

@@ -8,6 +8,7 @@ export interface SubStore {
     salt: string;
   };
   createdAt: string;
+  updatedAt?: string; // bumped on store changes (e.g. password) so other terminals pick them up on sync
 }
 
 export interface InventoryItem {
