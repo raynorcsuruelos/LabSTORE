@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import { InventoryItem, HistoryEntry, SyncQueueItem, CloudSyncConfig, SubStore } from '../types/inventory';
 import { initializeSecurity, hashPassword } from '../services/security';
+import { IS_STANDALONE } from '../standalone';
 
 export class WLLabDatabase extends Dexie {
   stores!: Table<SubStore, string>;
@@ -222,6 +223,8 @@ export async function enqueueSync(
   payload: any,
   storeId: string = ''
 ) {
+  // The offline copy never uploads, so there is nothing to queue
+  if (IS_STANDALONE) return;
   const queueItem: SyncQueueItem = {
     storeId,
     action,

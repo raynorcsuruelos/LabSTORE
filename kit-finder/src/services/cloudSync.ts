@@ -9,6 +9,7 @@ import {
   InventoryItem,
   SubStore
 } from '../types/inventory';
+import { IS_STANDALONE } from '../standalone';
 
 type SyncListener = (status: SyncServiceState) => void;
 
@@ -325,6 +326,9 @@ class CloudSyncService {
     source: string = 'manual',
     options: { replaceLocal?: boolean } = {}
   ): Promise<{ success: boolean; message: string }> {
+    if (IS_STANDALONE) {
+      return { success: false, message: 'This offline copy keeps data on this device only and does not sync.' };
+    }
     if (this.isSyncing) {
       this.resyncRequested = true;
       return { success: false, message: 'Sync already in progress.' };

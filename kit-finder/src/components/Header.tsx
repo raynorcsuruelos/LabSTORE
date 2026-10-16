@@ -12,10 +12,13 @@ import {
   LogOut,
   Building2,
   ChevronDown,
-  UserCircle2
+  UserCircle2,
+  Download,
+  HardDrive
 } from 'lucide-react';
 import { SyncServiceState } from '../services/cloudSync';
 import { OilRigLogo } from './OilRigLogo';
+import { IS_STANDALONE, STANDALONE_FILE_NAME } from '../standalone';
 
 interface HeaderProps {
   lowStockCount: number;
@@ -132,24 +135,34 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Cloud Sync Pill and Trigger */}
-        <div className="flex items-center gap-1 bg-black/25 p-1 rounded-lg border border-white/10">
-          <button
-            onClick={onOpenSync}
-            title="Open Cloud Sync Center"
-            className="flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer text-left"
+        {IS_STANDALONE ? (
+          <span
+            title="Offline copy: data is saved in this browser only and is not shared with the cloud database"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-900/60 text-amber-200 border border-amber-500/50 text-xs font-medium"
           >
-            <Cloud className="w-4 h-4 text-blue-300 ml-1" />
-            {getSyncBadge()}
-          </button>
-          <button
-            onClick={onQuickSync}
-            disabled={syncState.status === 'syncing'}
-            title="Trigger instant sync now"
-            className="p-1 hover:bg-white/20 rounded text-blue-200 hover:text-white transition cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncState.status === 'syncing' ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+            <HardDrive className="w-3.5 h-3.5" />
+            <span>Offline copy</span>
+          </span>
+        ) : (
+          <div className="flex items-center gap-1 bg-black/25 p-1 rounded-lg border border-white/10">
+            <button
+              onClick={onOpenSync}
+              title="Open Cloud Sync Center"
+              className="flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer text-left"
+            >
+              <Cloud className="w-4 h-4 text-blue-300 ml-1" />
+              {getSyncBadge()}
+            </button>
+            <button
+              onClick={onQuickSync}
+              disabled={syncState.status === 'syncing'}
+              title="Trigger instant sync now"
+              className="p-1 hover:bg-white/20 rounded text-blue-200 hover:text-white transition cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncState.status === 'syncing' ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        )}
 
         {/* Low Stock Notification Bell */}
         <button
@@ -203,15 +216,30 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline">Help</span>
         </button>
 
+        {/* Download Offline Copy */}
+        {!IS_STANDALONE && (
+          <a
+            href={`/${STANDALONE_FILE_NAME}`}
+            download={STANDALONE_FILE_NAME}
+            title="Download a standalone HTML copy that runs offline from a single file"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#0066a1] hover:bg-[#0077bb] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Download</span>
+          </a>
+        )}
+
         {/* App Sign Out */}
-        <button
-          onClick={onSignOut}
-          title={userEmail ? `Signed in as ${userEmail}. Click to sign out.` : 'Sign out'}
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#7f1d1d] hover:bg-[#991b1b] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
-        >
-          <UserCircle2 className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Sign out</span>
-        </button>
+        {!IS_STANDALONE && (
+          <button
+            onClick={onSignOut}
+            title={userEmail ? `Signed in as ${userEmail}. Click to sign out.` : 'Sign out'}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#7f1d1d] hover:bg-[#991b1b] text-white text-xs sm:text-sm font-semibold rounded-lg border-2 border-black cursor-pointer shadow-sm active:scale-95 transition"
+          >
+            <UserCircle2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign out</span>
+          </button>
+        )}
       </div>
     </header>
   );
