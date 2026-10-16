@@ -31,13 +31,14 @@ import { StoreSelectModal } from './components/StoreSelectModal';
 import { AuthGate } from './components/LoginScreen';
 import { logout, type User } from '@netlify/identity';
 import { BarChart3, ExternalLink } from 'lucide-react';
+import { IS_STANDALONE } from './standalone';
 
 interface PendingAdminAction {
   type: 'adjust' | 'withdraw' | 'add_stock' | 'sub_stock' | 'admin_panel';
   item?: InventoryItem;
 }
 
-function InventoryApp({ user }: { user: User }) {
+function InventoryApp({ user }: { user: User | null }) {
   const { showToast } = useToast();
 
   // Dexie Reactive Live Queries (Protected against render crashes)
@@ -170,7 +171,9 @@ function InventoryApp({ user }: { user: User }) {
     // Seed/upgrade the local copy first so the first cloud sync sees the final local state
     initDatabase()
       .catch(err => console.error('Failed to init IndexedDB:', err))
-      .finally(() => cloudSyncService.startBackgroundWorker());
+      .finally(() => {
+        if (!IS_STANDALONE) cloudSyncService.startBackgroundWorker();
+      });
 
     return () => {
       unsubscribe();
@@ -663,7 +666,7 @@ function InventoryApp({ user }: { user: User }) {
           currentStoreName={currentStore.name}
           currentStoreCode={currentStore.code}
           onOpenStoreSelect={() => setStoreSelectOpen(true)}
-          userEmail={user.email}
+          userEmail={user?.email}
           onSignOut={handleSignOut}
         />
 
@@ -835,7 +838,11 @@ function InventoryApp({ user }: { user: User }) {
 export default function App() {
   return (
     <ToastProvider>
-      <AuthGate>{user => <InventoryApp user={user} />}</AuthGate>
+      {IS_STANDALONE ? (
+        <InventoryApp user={null} />
+      ) : (
+        <AuthGate>{user => <InventoryApp user={user} />}</AuthGate>
+      )}
     </ToastProvider>
   );
 }
